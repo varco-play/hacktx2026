@@ -1,0 +1,24 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python / Node
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+frontend/dist/
+
+# Local media / biometric data — never commit
+recordings/
+models/*.onnx
+models/*.task
+*.mp4
+*.mkv
+*.webm
+*.npy
+evaluation/captures/
+
+.DS_Store

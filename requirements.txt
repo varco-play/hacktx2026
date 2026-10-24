@@ -1,0 +1,12 @@
+opencv-contrib-python==5.0.0.93
+numpy
+mediapipe==1.1.1
+av==18.1.0
+fastapi
+uvicorn[standard]
+pydantic>=2
+python-dotenv
+httpx
+websockets
+google-genai
+pytest
