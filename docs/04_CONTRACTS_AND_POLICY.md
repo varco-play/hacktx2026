@@ -90,23 +90,17 @@ class FrameResult:
 
 Don't publish embeddings, aligned facial crops, source pixels or subject descriptions as API metadata. `VISIBLE_NO_REQUEST` is **not** `CONSENT_GRANTED`. Persist refusal across stop/start of recording within session; default clear registry only at explicit session teardown, and note that reboot/reset defeats user protection in this prototype.
 
-## State transitions
+## State transitions (current)
 
 ```text
-NEW FACE -> IDENTITY_PENDING
-  -> CONFIRMED_NEW => VISIBLE_NO_REQUEST
-  -> MATCHED_PROTECTED => BLURRED_BY_REQUEST
-  -> AMBIGUOUS_MATCH => TEMP_SHIELD
-
-VISIBLE_NO_REQUEST --verified refusal for SAME person--> BLURRED_BY_REQUEST
-BLURRED_BY_REQUEST --leave/reappear same session--> BLURRED_BY_REQUEST
-BLURRED_BY_REQUEST --unverified 'allow'--> BLURRED_BY_REQUEST
-BLURRED_BY_REQUEST --verified reauthorization (future, approved only)--> VISIBLE_AUTHORIZED
-
-Unknown transcript/unknown speaker -> REQUEST_UNRESOLVED + shield/pause; do NOT assign a random face.
+NEW FACE -> (no protected person missing) -> person_N, UNKNOWN (visible; no face data stored)
+         -> (a protected person is missing) -> UNCERTAIN, shielded -> matched protected (DENIED) | new
+UNKNOWN  --own verified refusal (voice bound by lips / eyes closed 2 s / hands over eyes 1.5 s)--> DENIED (enrol face data)
+DENIED   --leave / return same session--> DENIED (shield while identifying)
+DENIED   --own ✌ 1 s (hand nearest own face) or own bound "unblur me"--> GRANTED (face data deleted)
+GRANTED  --own refusal again--> REVOKED (blurred)
+any      --unverified / hearsay / ambiguous speaker / wearer--> no change (UNRESOLVED shields all faces 3 s)
 ```
-
-**Note:** Initial visible state is requested by owner and not equivalent to legal consent. `ALLOW` intent does not mean verified reauthorization; leave transition disabled for MVP. No wearer override, and no LLM database writes.
 
 ## Deterministic authorization function pseudocode
 
@@ -117,7 +111,7 @@ def resolve_request(turn, parsed, matching, registry):
     if parsed.intent == 'NO_REQUEST': return NOOP
     if parsed.intent == 'UNCLEAR': return UNRESOLVED
     if parsed.intent == 'ALLOW':
-        return REQUEST_SUBJECT_REAUTHORIZATION  # no unblur in MVP
+        return UNPROTECT(matching.person_id) if bound_to_same_turn_speaker else REQUEST_ALLOW  # no effect
     if parsed.intent == 'DENY':
         if parsed.speaker_ref != 'SELF': return UNRESOLVED
         if matching.status != 'MATCHED' or matching.person_id is None: return UNRESOLVED

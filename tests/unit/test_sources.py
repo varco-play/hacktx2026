@@ -124,3 +124,30 @@ def test_session_runs_any_source_through_the_same_engine(tmp_path):
     m = sess.metrics()
     assert info["frames"] > 5 and info["error"] is None
     assert m["input_fps"] > 0 and m["frames"] > 5 and m["e2e_ms_p50"] is not None
+
+
+def test_lan_clients_only_reach_ingest():
+    from fastapi.testclient import TestClient
+    from backend.app import main
+    lan = TestClient(main.app, client=("192.168.1.50", 50000))
+    for path in ("/api/health", "/api/state", "/api/preview/protected", "/", "/api/sources"):
+        assert lan.get(path).status_code == 403, path
+    assert lan.post("/api/session/start", headers={"X-ConsentLens": "1"}).status_code == 403
+    local = TestClient(main.app)
+    assert local.get("/api/health").status_code == 200
+
+
+
+def test_rate_limiter_keeps_target_rate_without_halving():
+    from backend.app.runtime import admit_frame
+    def run(src_fps, target):
+        next_due, n, t = 0.0, 0, 0.0
+        for _ in range(int(src_fps * 10)):          # 10 s of frames
+            if admit_frame(t, next_due, 1 / target):
+                n += 1
+                next_due = max(next_due + 1 / target, t)
+            t += 1 / src_fps
+        return n / 10
+    assert 9.5 <= run(11.3, 10) <= 11.3            # previously 5.6
+    assert 14 <= run(30, 15) <= 16
+    assert 9 <= run(30, 10) <= 11

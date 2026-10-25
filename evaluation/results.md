@@ -63,3 +63,24 @@ Final replay: 0 landmark timeouts / 0 restarts; offline throughput ~55–67 fps.
 Voice (live Muse, final run): "please blur me" ⚡ partial path, issued ~0.5 s after speech end; "unblur me" ~0.8 s; Muse Spark phrases decided 1.3–1.5 s after the final transcript.
 
 Robustness: one replay hung inside MediaPipe (main thread blocked in a lock; not reproducible on the same file alone). Landmarks now run on a watchdog thread (120 ms budget, restart after 2 s); unit test simulates the hang.
+
+## 2026-10-25 ~02:30 — Acceptance tests (owner brief)
+
+Hardware during this run: MacBook Air M4, built-in camera + mic only (no phone connected, no Xcode, no glasses).
+
+| # | Test | Result | Evidence / limits |
+| --- | --- | --- | --- |
+| 1 | USB phone as webcam → live frames | **NOT TESTED** | No phone connected (`system_profiler` lists only the built-in camera). Same AVFoundation adapter as the built-in camera, which worked live at 30 fps from Terminal (owner session, 2026-10-24). |
+| 2 | Two people get distinct stable IDs | **PASS** | Owner's 106 s and 27 min two-person recordings replayed: 2 IDs (was 4 before the quality fix). |
+| 3 | A says "Please blur my face" → A blurred | **PARTIAL** | Live Muse STT → rules → policy → blur verified with streamed TTS audio and one visible face (single-candidate path). Two-person audio-visual matching passes synthetic unit tests only; not yet run with two real speakers. |
+| 4 | B moves, A stays blurred, B unaffected | **PASS** | E2E: B region max pixel diff 1.54 vs original; owner footage replays: only the requester blurred. |
+| 5 | A leaves and re-enters | **PASS (test clip) / limits** | E2E 31 s, 4 re-entries incl. teleports: 0/323 protected frames visible. Limits: only within one session; if A asked for blur and left before a clear face was seen, all newcomers stay shielded. |
+| 6 | Record, stop, play back — blur in file | **PASS** | Decoded protected MP4 vs restricted original: protected face pixels differ in every checked frame; 446/446 frames playable. |
+| 7 | Disconnect the phone | **PARTIAL** | Unit test with a fake device: DISCONNECTED event, slate (no raw/stale frames), reconnect to the same device only. Not tried with a real phone unplug. |
+| 8 | Stress with multiple faces | **PARTIAL** | Benchmarked 2 real faces per profile (ECO 9.5 fps / 44% CPU, BALANCED 14.0 / 61%, QUALITY 27.5 / 105%). No >2-face stress run yet (MediaPipe set to max 4 faces/hands). |
+| 9 | Meta Mock Device Kit lifecycle | **NOT TESTED** | No Xcode. Server side of Mode B passes with `scripts/companion_sim.py` (same wire format): 91 frames ingested and processed; source labeled "reported by app". |
+| 10 | Switch sources without changing the consent engine | **PASS** | Same `Session`/engine ran from video file, companion ingest, and (earlier) camera; source picker in dashboard; unit test drives Session from a file source. |
+| 11 | Ambiguous speech/face never assigns or unblurs | **PASS (unit) / not live** | Tests: both talking, off-screen voice, laugher out of sync, hearsay ALLOW, unbound ALLOW → nobody targeted, no unblur. Not yet exercised with real voices. |
+| 12 | Extended recording | **PARTIAL** | 27-min replay through the engine (2 IDs, no stalls); 31 s live-loop recording RSS 518 MB, 0 drops; event log bounded. No long (>10 min) live recording measured for memory growth yet. |
+
+Unit tests: 94 passed (`.venv/bin/python -m pytest`).

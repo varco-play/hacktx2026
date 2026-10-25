@@ -21,6 +21,12 @@ from backend.app.vision.renderer import full_shield
 from shared.contracts import FramePacket, OutputState
 
 
+def admit_frame(now: float, next_due: float, interval: float) -> bool:
+    """Rate limiter with 25% jitter tolerance: frames arriving slightly early still count,
+    so a 11 fps source isn't halved to 5.5 fps by a 10 fps target (measured bug)."""
+    return now >= next_due - 0.25 * interval
+
+
 def preview_labels(protected, tracks: list):
     """Live-preview-only feedback so a bystander can SEE their request worked.
     Drawn on a copy; the recorded protected file never gets these labels."""
@@ -64,6 +70,7 @@ class Session:
         self.capture = CaptureWorker(source, self.now_ms, self._source_event)
         self.governor = ThermalGovernor(settings.profile)
         self.e2e_ms = deque(maxlen=120)
+        self.rate_skipped = 0
         self.camera_connected = True
         self._proc = None
 
@@ -168,9 +175,11 @@ class Session:
                         self.latest_jpeg = jpg.tobytes()
                 continue
             now = time.monotonic()
-            if now < next_due:
-                continue  # frame arrived faster than the profile's processing rate: drop it
-            next_due = now + 1.0 / prof["process_fps"]
+            interval = 1.0 / prof["process_fps"]
+            if not admit_frame(now, next_due, interval):
+                self.rate_skipped += 1
+                continue  # faster than the profile's processing rate: drop (never queue)
+            next_due = max(next_due + interval, now)
             self.error = None
             self.frame_id += 1
             frame, t_ms = f.bgr, f.t_capture_ms
@@ -216,7 +225,7 @@ class Session:
                 "vision_ms_p50": pct(self.vision_ms, .5), "vision_ms_p95": pct(self.vision_ms, .95),
                 "e2e_ms_p50": pct(self.e2e_ms, .5), "e2e_ms_p95": pct(self.e2e_ms, .95),
                 "frames": self.frame_id, "captured": self.capture.frames_in,
-                "dropped": self.capture.dropped, "queue_depth": self.capture.queue_depth(),
+                "dropped": self.capture.dropped, "rate_skipped": self.rate_skipped, "queue_depth": self.capture.queue_depth(),
                 "active_tracks": len([t for t in self.latest_tracks if not t.get("coasting")]),
                 "cpu_percent": cpu, "rss_mb": rss,
                 "profile": self.governor.active, "profile_chosen": self.governor.chosen,

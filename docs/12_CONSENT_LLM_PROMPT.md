@@ -30,7 +30,7 @@ Enumerations: `intent = DENY|ALLOW|NO_REQUEST|UNCLEAR`, `speaker_ref = SELF|OTHE
 | “Don't record my face.” | DENY, SELF | protect only after binding |
 | “I'd rather not be in the clip.” | DENY, SELF | protect only after binding |
 | “Please don't unblur me.” | DENY, SELF | remain protected |
-| “I'm fine with being shown.” | ALLOW, SELF | **no automatic reveal** without verified reauth |
+| “I'm fine with being shown.” | ALLOW, SELF | unblur **only** if the speaker is matched to that face (same turn) |
 | “Don't blur my friend.” | ALLOW or UNCLEAR, OTHER | no change to friend |
 | “My friend says she's okay with filming.” | ALLOW/UNCLEAR, OTHER | no authorization for friend |
 | “He doesn't want to appear.” | DENY, OTHER | unresolved target; no random face |

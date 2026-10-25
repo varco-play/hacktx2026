@@ -191,7 +191,7 @@ function render() {
     ["Input FPS / processed FPS", `${un(m.input_fps)} / ${un(m.processed_fps)}`],
     ["Vision latency p50 / p95", `${un(m.vision_ms_p50, " ms")} / ${un(m.vision_ms_p95, " ms")}`],
     ["Capture→preview latency p50 / p95", `${un(m.e2e_ms_p50, " ms")} / ${un(m.e2e_ms_p95, " ms")}`],
-    ["Captured / processed / dropped (stale)", `${un(m.captured)} / ${un(m.frames)} / ${un(m.dropped)} · queue ${un(m.queue_depth)}`],
+    ["Captured / processed / dropped stale / skipped by profile", `${un(m.captured)} / ${un(m.frames)} / ${un(m.dropped)} / ${un(m.rate_skipped)} · queue ${un(m.queue_depth)}`],
     ["Active face tracks", un(m.active_tracks)],
     ["Quality profile", `${un(m.profile)}${m.throttled ? ' <b style="color:var(--warn)">(thermal throttle; chosen ' + esc(m.profile_chosen) + ")</b>" : ""}`],
     ["Process CPU / memory", `${un(m.cpu_percent, "%")} / ${un(m.rss_mb, " MB")}`],

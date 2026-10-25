@@ -25,6 +25,7 @@ from shared.contracts import PrivacyRequest, RequestAction, RequestOrigin
 settings = Settings()
 app = FastAPI(title="ConsentLens")
 CSRF_HEADER = "x-consentlens"
+LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
 @app.middleware("http")
@@ -32,6 +33,12 @@ async def require_app_header(request, call_next):
     """State-changing calls must carry a custom header. Browsers cannot add it cross-site
     without a CORS preflight (which we never grant), so other web pages can't start the
     camera, recording, or voice on this machine."""
+    host = request.client.host if request.client else ""
+    if host not in LOCAL_HOSTS:
+        # Phone/LAN clients may only use the token-protected ingest socket — never the
+        # dashboard, preview, state, recordings or controls (no login on those).
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "local access only"}, status_code=403)
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
         from fastapi.responses import JSONResponse
         return JSONResponse({"detail": "missing X-ConsentLens header"}, status_code=403)
@@ -237,6 +244,9 @@ def preview():
 
 @app.websocket("/api/events")
 async def events(ws: WebSocket):
+    if (ws.client.host if ws.client else "") not in LOCAL_HOSTS:
+        await ws.close(code=1008)
+        return
     await ws.accept()
     try:
         while True:

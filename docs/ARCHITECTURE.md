@@ -12,8 +12,10 @@ Camera glasses record everyone, but only the wearer chooses. ConsentLens gives t
 shared/contracts.py            one set of types: FramePacket, SpeechTurn, PrivacyRequest, FrameResult, enums
 backend/app/
   main.py                      FastAPI: session, recording, voice, protected MJPEG, events WS (CSRF header guard)
-  runtime.py                   Session: the ONE camera loop -> engine -> preview + recorder
-  capture.py                   CameraSource (only camera owner) / FileSource (labeled TEST INPUT)
+  runtime.py                   Session: latest-frame loop -> engine -> preview + recorder; metrics
+  capture.py                   CameraSource interface + adapters (USB phone / built-in by device ID,
+                               video file, companion-app stream) + CaptureWorker (drop-stale, reconnect)
+  profiles.py                  ECO / BALANCED / QUALITY + macOS thermal governor
   config.py                    .env settings; secrets never returned
   voice.py                     mic -> Muse STT -> rules / LLM -> speaker binding -> policy -> engine queue
   vision/
@@ -31,9 +33,12 @@ backend/app/
     meta_intent.py             Meta Muse Spark JSON intent (fallback / primary when Gemini unavailable)
     gemini_intent.py           Google Gemini JSON intent (primary when key + model valid)
   media/recorders.py           PyAV H.264 live writer (protected; diagnostic original only if enabled)
-frontend/index.html            dashboard: protected feed, people in frame, gesture meters, voice log, timeline
-tests/unit/                    84 tests: policy, rules, engine privacy, gestures, voice timing, recorder, API
-scripts/                       run.sh (--dev), fetch_models.sh (checksummed), make_test_video.py
+frontend/index.html            dashboard: source picker, protected feed, consent states, gesture meters,
+                               voice log, timeline, diagnostics (measured or "unavailable")
+ios/ConsentLensCompanion/      iOS companion on Meta DAT 1.0.1 (written, not compiled — see META_SDK_INTEGRATION.md)
+tests/unit/                    94 tests: policy, rules, engine privacy, gestures, voice timing, recorder, API
+scripts/                       run.sh (--dev / --lan), fetch_models.sh, benchmark.py, companion_sim.py,
+                               make_test_video.py
 backend/app/media/storage.py   Cloudflare R2 upload (protected/ presigned; raw restricted/, off by default)
 docs/                          architecture, contracts, privacy, research results; evaluation/results.md = measurements
 ```
@@ -79,6 +84,20 @@ Mic 24 kHz ─► Muse realtime STT ─► partial: rules DENY? act now (~0.6 s)
 ```
 
 State per person: `VISIBLE_NO_REQUEST` (not consent) → `BLURRED_BY_REQUEST` → `VISIBLE_BY_CONSENT` (only by the same person), session-scoped. Embeddings are deleted at session end.
+
+## 4b. Interfaces and module ownership (for parallel work)
+
+| Module | Interface (stable) | Can be owned separately |
+| --- | --- | --- |
+| Sources / SDK adapters | `CameraSource` (`initialize/start/read/stop/cleanup/capabilities/status`), ingest wire format | yes — new adapters never touch the engine |
+| Vision | `VisionEngine.step(FramePacket) -> FrameResult`, `submit(PrivacyRequest)` | yes |
+| Audio + STT | `SpeechTurn`, mic loudness envelope `[(t_ms, rms)]` | yes |
+| Speaker matching | `match_speaker(turn, visibility_history, audio_env) -> SpeakerMatch` | yes |
+| Consent policy | `resolve_request(...) -> PrivacyRequest`, registry states | yes (small, deterministic) |
+| Recording / storage | `PairedRecorder.write(source, protected, t_ms)`, `R2Storage` | yes |
+| Frontend | `/api/state`, `/api/events` JSON, `/api/preview/protected` | yes |
+
+All timestamps are the server's monotonic session clock (`Session.now_ms`), stamped when a frame or audio chunk arrives.
 
 ## 5. Path to real Meta glasses
 

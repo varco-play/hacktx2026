@@ -36,6 +36,8 @@ Run it from Terminal.app so macOS asks for Camera and Microphone access. Then **
 - Tests: `.venv/bin/python -m pytest`
 - Replay a file instead of the camera (shown as TEST INPUT): `TEST_VIDEO=clip.mp4 scripts/run.sh`
 - Dev mode (auto-reload, manual test controls, local raw copy): `scripts/run.sh --dev`
+- Phone companion app on the network (only the token-protected ingest is reachable): `scripts/run.sh --lan`
+- Benchmark profiles: `nice -n 19 .venv/bin/python scripts/benchmark.py clip.mp4`
 - Scripted API calls need the header `X-ConsentLens: 1` on every POST.
 
 ## Stack
@@ -46,10 +48,14 @@ Python 3.11 · OpenCV (YuNet, SFace) · MediaPipe (face, hand, pose landmarkers)
 
 | | |
 | --- | --- |
-| [Architecture & critique](docs/ARCHITECTURE.md) | pipeline, components, Meta glasses path, known weaknesses |
-| [Contracts](docs/04_CONTRACTS_AND_POLICY.md) | shared data types and consent state machine |
-| [Privacy](docs/09_PRIVACY_SECURITY.md) | data handling, retention, what we can't guarantee |
-| [Results](evaluation/results.md) | measured latency, FPS, and real-footage checks |
+| [Architecture & critique](docs/ARCHITECTURE.md) | pipeline, interfaces, Meta glasses path, known weaknesses |
+| [Meta SDK integration](docs/META_SDK_INTEGRATION.md) | Modes A/B/C, DAT 1.0.1 API, companion app, what is and isn't tested |
+| [Glasses optimization](docs/GLASSES_OPTIMIZATION.md) | profiles, thermal governor, measured CPU/FPS |
+| [Phone camera setup](docs/PHONE_CAMERA_SETUP.md) | USB/Continuity phone as camera, permissions, audio |
+| [Privacy & consent](docs/PRIVACY_AND_CONSENT.md) | consent states, data handling, guarantees and limits |
+| [Demo guide](docs/DEMO_GUIDE.md) | commands, 2-minute script, troubleshooting |
+| [Contracts](docs/04_CONTRACTS_AND_POLICY.md) · [LLM prompt](docs/12_CONSENT_LLM_PROMPT.md) | shared types, state machine, intent schema |
+| [Results](evaluation/results.md) | measurements and acceptance tests |
 
 ## Limits (honest)
 

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyLists-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key><string>ConsentLens</string>
+	<key>CFBundleExecutable</key><string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key><string>ConsentLensCompanion</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>0.1</string>
+	<key>CFBundleVersion</key><string>1</string>
+	<key>UILaunchScreen</key><dict/>
+	<key>CFBundleURLTypes</key>
+	<array><dict>
+		<key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+		<key>CFBundleURLSchemes</key><array><string>consentlens</string></array>
+	</dict></array>
+	<!-- Keys as in Meta's CameraAccess sample (DAT 1.0.1) -->
+	<key>MWDAT</key>
+	<dict>
+		<key>AppLinkURLScheme</key><string>consentlens://</string>
+		<key>MetaAppID</key><string>$(META_APP_ID)</string>
+		<key>ClientToken</key><string>$(CLIENT_TOKEN)</string>
+		<key>TeamID</key><string>$(DEVELOPMENT_TEAM)</string>
+		<key>Analytics</key><dict><key>OptOut</key><true/></dict>
+	</dict>
+	<key>UIBackgroundModes</key>
+	<array><string>bluetooth-central</string><string>bluetooth-peripheral</string></array>
+	<key>NSBluetoothAlwaysUsageDescription</key><string>Needed to connect to Meta AI glasses.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key><string>Needed to connect to Meta AI glasses.</string>
+	<key>NSLocalNetworkUsageDescription</key><string>Connects to your glasses and to the ConsentLens processing server on your network.</string>
+	<key>NSBonjourServices</key><array><string>_bonjour._tcp</string></array>
+	<key>NSCameraUsageDescription</key><string>Mock Device Kit can use the phone camera as the simulated glasses camera.</string>
+</dict>
+</plist>
