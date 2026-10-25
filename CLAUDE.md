@@ -16,7 +16,7 @@ Read `README.md` and **all applicable** `docs/*.md` before changing source. You 
 - Video processing on local device; only speech transcripts and minimal context sent to LLM by default. Do not send raw bystander face imagery/embeddings to Gemini/Meta/AWS without owner approval, lawful basis, and explicit test participant consent.
 - Gemini or Muse **interprets words**, not identity. Mouth motion provides a candidate, not proof. No confident speaker assignment when ambiguous. A model cannot call an unrestricted `unblur` tool or write database rows directly.
 - Defaults: visible when genuinely new and no recorded refusal; **temporarily shield while deciding whether a new detection is a protected return**. Do not equate visibility default with consent.
-- Privacy writes are monotonic denial in core build; subject-verified reversal is a separate optional future feature; never wearer-only override.
+- **Owner decision 2026-10-24 20:15:** a blurred person may unblur **their own** face only — a ✌ peace sign held 1 s by a hand clearly nearest their face (not resting on any face), or their own spoken consent ("unblur me") bound to them by lip-motion/single-visible evidence. Hearsay, ambiguous binding, the wearer, or an LLM alone can never unblur anyone. Blur triggers: voice refusal, eyes closed 2 s, hands over eyes 1.5 s.
 - Fail protected output closed for known protected/uncertain identities. Never leak raw pixels via preview, encoder fallback, thumbnail, error page, log, or debug endpoint.
 - Session-local biometric feature gallery, consenting volunteers only, no identity database shared across sessions.
 - Cloud Meta glasses/firmware enforcement and secure evidence escrow are future architecture **only**.

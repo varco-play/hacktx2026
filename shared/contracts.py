@@ -29,7 +29,8 @@ class SpeakerRef(str, Enum):
 
 class Privacy(str, Enum):
     VISIBLE_NO_REQUEST = "VISIBLE_NO_REQUEST"  # NOT consent
-    BLURRED_BY_REQUEST = "BLURRED_BY_REQUEST"  # latched for the session
+    BLURRED_BY_REQUEST = "BLURRED_BY_REQUEST"  # until the SAME person gives consent
+    VISIBLE_BY_CONSENT = "VISIBLE_BY_CONSENT"  # subject-bound peace sign or own "unblur me"
 
 
 class IdentityStatus(str, Enum):
@@ -54,7 +55,8 @@ class RequestOrigin(str, Enum):
 
 class RequestAction(str, Enum):
     PROTECT = "PROTECT"
-    REQUEST_ALLOW = "REQUEST_ALLOW"  # recorded, never unblurs in MVP
+    UNPROTECT = "UNPROTECT"  # only when bound to the protected person themself (verified)
+    REQUEST_ALLOW = "REQUEST_ALLOW"  # allow without a verified subject binding: recorded, no effect
     UNRESOLVED = "UNRESOLVED"
 
 

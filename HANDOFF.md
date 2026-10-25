@@ -1,4 +1,4 @@
-# Handoff — branch main — 2026-10-24 19:00 CDT
+# Handoff — branch main — 2026-10-24 20:20 CDT
 
 ## What changed
 Gate 0 (preflight) + Gate 1 (protected pixels) + Gate 2 (session re-ID, tested on TEST INPUT) + most of Gate 4 (voice path). One process: `CameraSource` → `Session._loop` → `VisionEngine.step` → protected MJPEG + `PairedRecorder`. Voice: mic → Muse realtime STT → `local_rules` → Muse Spark → `match_speaker` → `resolve_request` → `engine.submit()`.
@@ -7,7 +7,7 @@ Gate 0 (preflight) + Gate 1 (protected pixels) + Gate 2 (session re-ID, tested o
 `shared/contracts.py`; `backend/app/{main,runtime,capture,config,voice}.py`; `backend/app/vision/{detector,engine,renderer}.py`; `backend/app/consent/{registry,policy,speaker}.py`; `backend/app/providers/{local_rules,meta_intent,meta_voice}.py`; `backend/app/media/recorders.py`; `frontend/index.html`; `tests/unit/*`; `scripts/*`.
 
 ## Exact commands/tests and actual outcomes
-- `.venv/bin/python -m pytest` → **36 passed** (policy, rules, LLM-output validation, engine privacy incl. re-entry 0 leak frames, fail-closed, recorder playable, health has no secrets).
+- `.venv/bin/python -m pytest` → **65 passed** (policy, rules, LLM-output validation, engine privacy incl. re-entry 0 leak frames, fail-closed, recorder playable, health has no secrets).
 - E2E on TEST INPUT via the real server: see `evaluation/results.md` (0/117 leak frames, 14 fps).
 - Meta Muse STT (file + realtime WS) and Muse Spark structured output: real 200 responses.
 
@@ -15,13 +15,13 @@ Gate 0 (preflight) + Gate 1 (protected pixels) + Gate 2 (session re-ID, tested o
 New: `shared/contracts.py` per docs/04 (+ `Privacy`, `IdentityStatus`, `OutputState`, `RequestOrigin`, `RequestAction` enums, `ConsentInterpretation.source`). Routes as docs/04 plus `/api/voice/start|stop` and env-gated `/api/dev/protect/{person_id}`.
 
 ## Known bugs / limits (do not overclaim)
-- **Live camera not yet tested** — macOS camera permission not granted at time of writing.
-- **Two-person speaker attribution not implemented**: with ≥2 visible people a voice refusal is `UNRESOLVED` (3 s shield of all faces, nobody latched). Only `single_candidate` binding works. Next: MediaPipe lip-motion heuristic (Gate 3).
-- Gemini key rejected (401) → Gemini adapter not built; Muse Spark is the LLM.
-- A protected face the detector misses for > ~1 s (profile, occlusion) is not shielded. A returning protected person whose SFace score falls below 0.28 would be confirmed as a new visible person.
-- Future-frames-only: footage before a refusal stays unblurred in both files.
-- objc warning: cv2 and PyAV both bundle libavdevice; no crash observed yet.
-- Frontend is plain HTML (React/Vite migration optional, Abbos's area).
+- Live-camera verified: capture 30 fps, detection, voice LIVE. **Not yet verified live:** peace sign with a real hand, eyes-closed 2 s, two-person lip-motion attribution with real speech (replay + unit tests only).
+- Gemini key rejected (401) → `INTENT_PROVIDER=gemini` falls back to Muse Spark and says so in the UI.
+- Lip-motion thresholds (`MIN_ACTIVITY=0.012`, ratio 2.0) are uncalibrated guesses.
+- A protected face the detector misses for > 1.2 s (profile, occlusion without hands) is not shielded.
+- A returning protected person whose SFace score stays in the ambiguous band stays "identifying…" and shielded; if it falls below 0.22 for 8 good frames they'd be treated as new and visible.
+- Future-frames-only: footage before a refusal stays unblurred.
+- objc warning: cv2 and PyAV both bundle libavdevice; no crash observed.
 
 ## Provider access checked
 Meta Model API key: yes, works (STT + Spark). Gemini key: present but invalid. No values recorded.

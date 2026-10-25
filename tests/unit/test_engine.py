@@ -2,7 +2,7 @@ import numpy as np
 from backend.app.vision.engine import VisionEngine
 from backend.app.consent.speaker import match_speaker
 from shared.contracts import (OutputState, PrivacyRequest, RequestAction, RequestOrigin, SpeechTurn)
-from tests.unit.fakes import Script, face, packet
+from tests.unit.fakes import Script, face, face_sig, hand, hand_over_eyes, packet
 
 def make():
     s = Script()
@@ -26,7 +26,7 @@ def region_changed(src, out, x, y, size=100):
 def test_two_faces_get_distinct_ids_and_stay_visible():
     s, e = make()
     s.frame = [face("A", 100, 100), face("B", 400, 100)]
-    res, _ = run(e, s, 6, 1)
+    res, _ = run(e, s, 12, 1)
     a, b = pid_of(res, 100), pid_of(res, 400)
     assert a and b and a != b
     assert res.output_state == OutputState.NORMAL
@@ -35,7 +35,7 @@ def test_two_faces_get_distinct_ids_and_stay_visible():
 def test_protect_blurs_only_target_in_pixels_and_source_untouched():
     s, e = make()
     s.frame = [face("A", 100, 100), face("B", 400, 100)]
-    res, n = run(e, s, 6, 1)
+    res, n = run(e, s, 12, 1)
     a = pid_of(res, 100)
     protect(e, a)
     pkt = packet(n)
@@ -49,7 +49,7 @@ def test_protect_blurs_only_target_in_pixels_and_source_untouched():
 def test_reentry_is_shielded_while_pending_then_matched_protected_and_B_unaffected():
     s, e = make()
     s.frame = [face("A", 100, 100), face("B", 400, 100)]
-    res, n = run(e, s, 6, 1)
+    res, n = run(e, s, 12, 1)
     a, b = pid_of(res, 100), pid_of(res, 400)
     protect(e, a)
     res, n = run(e, s, 2, n)
@@ -70,7 +70,7 @@ def test_reentry_is_shielded_while_pending_then_matched_protected_and_B_unaffect
 def test_new_stranger_shielded_while_protected_absent_then_visible_when_confirmed_new():
     s, e = make()
     s.frame = [face("A", 100, 100)]
-    res, n = run(e, s, 6, 1)
+    res, n = run(e, s, 12, 1)
     protect(e, pid_of(res, 100))
     res, n = run(e, s, 2, n)
     s.frame = []
@@ -78,14 +78,14 @@ def test_new_stranger_shielded_while_protected_absent_then_visible_when_confirme
     s.frame = [face("C", 300, 200)]
     first = e.step(packet(n))
     assert first.tracks[0]["shielded"]
-    res, n = run(e, s, 6, n + 1)
+    res, n = run(e, s, 12, n + 1)
     t = res.tracks[0]
     assert t["person_id"] and not t["shielded"] and t["identity_status"] == "CONFIRMED_NEW"
 
-def test_allow_and_unverified_requests_never_unblur():
+def test_unverified_allow_never_unblurs():
     s, e = make()
     s.frame = [face("A", 100, 100)]
-    res, n = run(e, s, 6, 1)
+    res, n = run(e, s, 12, 1)
     a = pid_of(res, 100)
     protect(e, a)
     protect(e, a, eid="e2", origin=RequestOrigin.VOICE, action=RequestAction.REQUEST_ALLOW, verified=False)
@@ -95,7 +95,7 @@ def test_allow_and_unverified_requests_never_unblur():
 def test_unverified_protect_does_not_target_random_person_but_shields_briefly():
     s, e = make()
     s.frame = [face("A", 100, 100), face("B", 400, 100)]
-    res, n = run(e, s, 6, 1)
+    res, n = run(e, s, 12, 1)
     protect(e, None, eid="u1", origin=RequestOrigin.VOICE, action=RequestAction.UNRESOLVED, verified=False)
     res = e.step(packet(n))
     assert not e.registry.any_protected()
@@ -105,7 +105,7 @@ def test_unverified_protect_does_not_target_random_person_but_shields_briefly():
 def test_duplicate_event_ids_ignored():
     s, e = make()
     s.frame = [face("A", 100, 100)]
-    res, n = run(e, s, 6, 1)
+    res, n = run(e, s, 12, 1)
     a = pid_of(res, 100)
     protect(e, a, eid="same"); protect(e, a, eid="same")
     res = e.step(packet(n))
@@ -114,7 +114,7 @@ def test_duplicate_event_ids_ignored():
 def test_detector_exception_fails_closed_without_source_pixels():
     s, e = make()
     s.frame = [face("A", 100, 100)]
-    run(e, s, 3, 1)
+    run(e, s, 12, 1)
     s.fail = True
     pkt = packet(10)
     res = e.step(pkt)
@@ -125,7 +125,7 @@ def test_detector_exception_fails_closed_without_source_pixels():
 def test_protected_track_coasts_shielded_on_missed_detection():
     s, e = make()
     s.frame = [face("A", 100, 100)]
-    res, n = run(e, s, 6, 1)
+    res, n = run(e, s, 12, 1)
     protect(e, pid_of(res, 100))
     res, n = run(e, s, 2, n)
     s.frame = []                     # detector misses A for a few frames
@@ -173,9 +173,9 @@ def test_mouth_failure_does_not_break_privacy_path():
     s = Script()
     def bad_mouth(bgr, t):
         raise RuntimeError("landmarker down")
-    e = VisionEngine("s_test", s.detect, s.feature, mouth=bad_mouth)
+    e = VisionEngine("s_test", s.detect, s.feature, signals=bad_mouth)
     s.frame = [face("A", 100, 100)]
-    res, n = run(e, s, 6, 1)
+    res, n = run(e, s, 12, 1)
     assert res.output_state == OutputState.NORMAL and res.tracks[0]["person_id"]
 
 
@@ -184,3 +184,130 @@ def test_single_visible_face_with_still_lips_is_not_blamed_for_offscreen_voice()
     hist = [(t * 66, ("person_001",), {"person_001": 0.02}) for t in range(30)]
     m = match_speaker(turn, hist)
     assert m.status == "OFFSCREEN" and m.person_id is None
+
+
+
+def make_sig():
+    s = Script()
+    return s, VisionEngine("s_test", s.detect, s.feature, signals=s.signals)
+
+def two_people(s, e):
+    s.frame = [face("A", 100, 100), face("B", 400, 100)]
+    res, n = run(e, s, 12, 1)
+    return pid_of(res, 100), pid_of(res, 400), n
+
+def test_eyes_closed_two_seconds_blurs_only_that_person_and_blink_does_not():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    s.sig = {"faces": [face_sig(100, 100, eyes_closed=0.9), face_sig(400, 100)], "hands": []}
+    res, n = run(e, s, 8, n)                     # ~0.5 s blink-length closure
+    assert not e.registry.get(a).protected
+    s.sig = {"faces": [face_sig(100, 100), face_sig(400, 100)], "hands": []}
+    res, n = run(e, s, 2, n)
+    s.sig = {"faces": [face_sig(100, 100, eyes_closed=0.9), face_sig(400, 100)], "hands": []}
+    res, n = run(e, s, 33, n)                    # ~2.1 s
+    assert e.registry.get(a).protected and not e.registry.get(b).protected
+    assert any(ev["type"] == "PRIVACY_ACTIVATED" and ev["details"].get("gesture") == "eyes_closed"
+               for ev in e.event_log)
+
+def test_hands_over_eyes_blurs_even_if_detector_loses_the_face():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    s.frame = [face("B", 400, 100)]              # A's face hidden by hands
+    s.sig = {"faces": [face_sig(400, 100)], "hands": [hand_over_eyes(100, 100)]}
+    res, n = run(e, s, 26, n)                    # ~1.7 s
+    assert e.registry.get(a).protected and not e.registry.get(b).protected
+
+def test_peace_sign_unblurs_only_its_owner():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    for pid in (a, b):
+        e.submit(PrivacyRequest("s_test", "p" + pid, RequestOrigin.MANUAL_TEST, None, pid, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    s.sig = {"faces": [], "hands": [hand(470, 280, peace=True)]}   # B's hand, next to B's face
+    res, n = run(e, s, 17, n)                    # ~1.1 s
+    assert not e.registry.get(b).protected, "B's own peace sign should unblur B"
+    assert e.registry.get(a).protected, "B's peace sign must never unblur A"
+    assert any(ev["type"] == "PRIVACY_RELEASED" and ev["person_id"] == b for ev in e.event_log)
+
+def test_peace_sign_between_two_faces_is_ignored():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    s.sig = {"faces": [], "hands": [hand(325, 150, peace=True)]}   # equidistant
+    res, n = run(e, s, 30, n)
+    assert e.registry.get(a).protected
+
+def test_brief_peace_sign_does_not_unblur():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    s.sig = {"faces": [], "hands": [hand(170, 280, peace=True)]}
+    res, n = run(e, s, 8, n)                     # ~0.5 s
+    assert e.registry.get(a).protected
+
+def test_voice_unprotect_request_applies():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    e.submit(PrivacyRequest("s_test", "ua", RequestOrigin.VOICE, "t9", a, RequestAction.UNPROTECT, 0, True))
+    res = e.step(packet(n))
+    assert not e.registry.get(a).protected and not res.tracks[0]["shielded"]
+
+def test_bad_frames_and_edge_faces_do_not_create_duplicate_people():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    s.bad_feature_for = {"A"}                    # A turns away / blurs for a while
+    res, n = run(e, s, 60, n)
+    s.bad_feature_for = set()
+    s.frame = [face("A", 100, 100), face("B", 400, 100), face("C", 250, 0)]  # partial face at top edge
+    res, n = run(e, s, 30, n)
+    assert len(e.registry.persons) == 2, [p for p in e.registry.persons]
+
+
+def test_real_track_swap_is_rechecked():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    s.frame = [face("B", 100, 100)]          # A's track position now shows B's face (B left right side)
+    res, n = run(e, s, 60, n)
+    assert any(ev["type"] == "IDENTITY_RECHECK" and ev["person_id"] == a for ev in e.event_log)
+    assert pid_of(res, 100) == b and len(e.registry.persons) == 2
+
+
+def _hand_pts(fingers_up):
+    """Synthetic upright hand: wrist at (0,0) pixel space flipped (y up = negative)."""
+    import numpy as np
+    pts = np.zeros((21, 2), np.float32)
+    pts[0] = (0, 0)
+    bases = {1: -30, 5: -15, 9: 0, 13: 15, 17: 28}
+    for mcp, x in bases.items():
+        if mcp == 1:
+            pts[1:5] = [(x, -15), (x - 8, -25), (x - 14, -33), (x - 18, -40)]
+            continue
+        pts[mcp] = (x, -60)
+        name = {5: "index", 9: "middle", 13: "ring", 17: "pinky"}[mcp]
+        if name in fingers_up:
+            lean = -6 if name == "index" else 6
+            pts[mcp + 1:mcp + 4] = [(x + lean * 0.4, -85), (x + lean * 0.7, -100), (x + lean, -115)]
+        else:  # curled back toward palm
+            pts[mcp + 1:mcp + 4] = [(x, -78), (x, -66), (x, -55)]
+    return pts + np.array([300, 300], np.float32)
+
+def test_peace_sign_geometry():
+    from backend.app.vision.landmarks import is_peace
+    assert is_peace(_hand_pts({"index", "middle"}))
+    assert not is_peace(_hand_pts({"index"}))                       # pointing
+    assert not is_peace(_hand_pts({"index", "middle", "ring", "pinky"}))  # open palm
+    assert not is_peace(_hand_pts(set()))                           # fist
+
+def test_peace_hand_resting_on_a_face_is_ignored():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    s.sig = {"faces": [], "hands": [hand(150, 150, peace=True)]}   # palm inside A's face box
+    res, n = run(e, s, 30, n)
+    assert e.registry.get(a).protected

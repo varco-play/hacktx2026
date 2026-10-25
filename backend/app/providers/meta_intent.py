@@ -27,6 +27,9 @@ SYSTEM = (
     "person ID. Return only JSON satisfying the schema."
 )
 
+FORMAT_HINT = (' Output exactly: {"intent": "DENY|ALLOW|NO_REQUEST|UNCLEAR", "speaker_ref": '
+               '"SELF|OTHER|UNKNOWN", "needs_clarification": true|false, "reason_short": "<=160 chars"}')
+
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -60,7 +63,7 @@ def parse_output(turn_id: str, content: str, source: str = "muse_spark") -> Cons
 
 
 class MuseSparkInterpreter:
-    def __init__(self, api_key: str, model: Optional[str] = None, timeout: float = 15.0):
+    def __init__(self, api_key: str, model: Optional[str] = None, timeout: float = 8.0):
         self.api_key = api_key
         self.model = model or os.getenv("META_INTENT_MODEL", "muse-spark-1.3")
         self.timeout = timeout
@@ -68,11 +71,12 @@ class MuseSparkInterpreter:
     def interpret(self, turn: SpeechTurn) -> ConsentInterpretation:
         body = {
             "model": self.model,
-            "messages": [{"role": "system", "content": SYSTEM},
+            "reasoning_effort": os.getenv("META_INTENT_EFFORT", "minimal"),  # measured ~1.4 s vs 3-9 s default
+            "messages": [{"role": "system", "content": SYSTEM + FORMAT_HINT},
                          {"role": "user", "content": json.dumps({"transcript": turn.text})}],
-            "response_format": {"type": "json_schema",
-                                "json_schema": {"name": "ConsentInterpretation", "strict": True,
-                                                "schema": SCHEMA}},
+            # json_object measured 0.9-1.6 s vs strict json_schema 0.9-8.4 s (2026-10-24);
+            # shape is still enforced by parse_output (invalid -> UNCLEAR, never a grant).
+            "response_format": {"type": "json_object"},
         }
         try:
             r = httpx.post(URL, headers={"Authorization": f"Bearer {self.api_key}"},

@@ -11,6 +11,7 @@ import queue
 import threading
 import time
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from backend.app.consent.policy import resolve_request
@@ -33,6 +34,11 @@ class VoicePipeline:
         self._mic = None
         self._audio_t0_ms: Optional[int] = None  # session ms of first audio sample sent
         self._n = 0
+        self._acted: set = set()
+        # decisions run off the receive loop so one slow LLM call never stalls later turns
+        self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="voice-decide")
+        self._gen = 0
+        self.sync_decisions = False  # turn ids already decided (partial fast path or final)
         self.llm, self.fallback, self.intent_label = self._build_interpreters(settings)
 
     @staticmethod
@@ -102,6 +108,7 @@ class VoicePipeline:
 
     async def _run(self) -> None:
         while not self._stop.is_set():
+            self._gen += 1
             try:
                 await meta_voice.stream(self.settings.meta_key, self._chunks(), self._on_turn,
                                         self._set_status)
@@ -114,22 +121,51 @@ class VoicePipeline:
         self.detail = s
 
     async def _on_turn(self, t: tuple) -> None:
-        tid, start, end, text = t
+        kind, tid, start, end, text = t
         base = self._audio_t0_ms or 0
-        self._n += 1
-        turn = SpeechTurn(self.session.session_id, f"turn_{self._n:03d}_{tid}", base + start, base + end,
-                          text, True)
-        await asyncio.get_running_loop().run_in_executor(None, self.handle_turn, turn)
+        turn_id = f"turn_g{self._gen}_{tid}"  # Muse turn ids restart on every reconnect
+        if kind == "partial":
+            # Early action only for explicit REFUSALS (fail-safe). Consent waits for the final.
+            if turn_id in self._acted:
+                return
+            early = SpeechTurn(self.session.session_id, turn_id, base + start, base + end, text, True)
+            parsed = local_rules.interpret(early)
+            if parsed is not None and parsed.intent.value == "DENY":
+                self._acted.add(turn_id)
+                self._dispatch(lambda: self.handle_turn(early, parsed=parsed, early=True))
+            return
+        turn = SpeechTurn(self.session.session_id, turn_id, base + start, base + end, text, True)
+        if turn_id in self._acted:
+            self._log_final_only(turn_id, text)
+            final = local_rules.interpret(turn)
+            if final is not None and final.intent.value == "DENY":
+                return  # final agrees with the early refusal
+            # final transcript changed meaning (e.g. partial "blur me" -> final "unblur me"): decide again
+            turn = SpeechTurn(self.session.session_id, turn_id + "_final", turn.start_ms, turn.end_ms, text, True)
+        self._acted.add(turn_id)
+        self._dispatch(lambda: self.handle_turn(turn))
 
-    def handle_turn(self, turn: SpeechTurn) -> dict:
+    def _dispatch(self, fn) -> None:
+        if self.sync_decisions:  # unit tests
+            fn()
+        else:
+            self._pool.submit(fn)
+
+    def _log_final_only(self, turn_id: str, text: str) -> None:
+        for r in self.turns:
+            if r.get("turn_id") == turn_id:
+                r["final_text"] = text
+
+    def handle_turn(self, turn: SpeechTurn, parsed=None, early: bool = False) -> dict:
         t0 = time.monotonic()
-        parsed = local_rules.interpret(turn)
+        if parsed is None:
+            parsed = local_rules.interpret(turn)
         if parsed is None and self.llm is not None:
             parsed = self.llm.interpret(turn)
             if parsed.reason_short.startswith("provider error") and self.fallback is not None:
                 parsed = self.fallback.interpret(turn)
         record = {"turn_id": turn.turn_id, "text": turn.text, "start_ms": turn.start_ms,
-                  "end_ms": turn.end_ms}
+                  "end_ms": turn.end_ms, "early_partial": early}
         if parsed is None:
             record.update(intent="UNCLEAR", source="none", action=None)
             self.turns.append(record)

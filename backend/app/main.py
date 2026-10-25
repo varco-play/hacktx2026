@@ -78,11 +78,11 @@ def session_start():
             src = CameraSource(settings.camera_index, settings.width, settings.height, settings.fps)
             label = "CAMERA"
         try:
-            from backend.app.vision.landmarks import MouthTracker
-            mouth = MouthTracker(settings.models_dir)  # fresh per session (VIDEO-mode timestamps)
+            from backend.app.vision.landmarks import Signals
+            signals = Signals(settings.models_dir)  # fresh per session (VIDEO-mode timestamps)
         except Exception:
-            mouth = None  # speaker binding falls back to single_candidate; shown in /api/health
-        sess = Session(settings, src, _models(), label, mouth=mouth)
+            signals = None  # no gestures; speaker binding falls back to single_candidate (shown in state)
+        sess = Session(settings, src, _models(), label, signals=signals)
         try:
             sess.start()
         except Exception as exc:

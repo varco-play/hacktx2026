@@ -28,9 +28,10 @@ def handshake(api_key: str, model: str = "muse-voice-transcribe-1.0") -> dict:
 
 
 class TurnAssembler:
-    """Collects server events into final turns: (turn_id, start_ms, end_ms, text)."""
+    """Server events -> ("partial"|"final", turn_id, start_ms, end_ms, text)."""
 
     def __init__(self):
+        self.current: Optional[str] = None  # turn id of the utterance in progress
         self.starts: dict = {}
         self.ends: dict = {}
         self.seen: set = set()
@@ -39,11 +40,15 @@ class TurnAssembler:
     def feed(self, msg: dict) -> Optional[tuple]:
         t = msg.get("type")
         if t == "speechStart":
-            self.starts[msg.get("turnId")] = int(msg.get("audioProcessedMs", 0))
+            self.current = msg.get("turnId")
+            self.starts[self.current] = int(msg.get("audioProcessedMs", 0))
         elif t == "speechEnd":
             self.ends[msg.get("turnId")] = int(msg.get("audioProcessedMs", 0))
         elif t == "transcript" and not msg.get("final"):
             self.partial = msg.get("transcript", "")
+            if self.current is not None and self.current not in self.seen:
+                return ("partial", str(self.current), self.starts.get(self.current, 0),
+                        int(msg.get("audioProcessedMs", 0)), self.partial)
         elif t == "speechComplete":
             tid = msg.get("turnId")
             if tid in self.seen:  # duplicate final -> ignore
@@ -52,7 +57,7 @@ class TurnAssembler:
             end = self.ends.get(tid, int(msg.get("audioProcessedMs", 0)))
             start = self.starts.get(tid, max(0, end - 2000))
             self.partial = ""
-            return (str(tid), start, end, msg.get("transcript", ""))
+            return ("final", str(tid), start, end, msg.get("transcript", ""))
         return None
 
 

@@ -14,7 +14,7 @@ from shared.contracts import (ConsentInterpretation, Intent, PrivacyRequest,
 def resolve_request(turn: SpeechTurn, parsed: ConsentInterpretation,
                     match: Optional[SpeakerMatch], session_id: str,
                     event_id: str) -> Optional[PrivacyRequest]:
-    """Return None for no-op. Never returns an unblur action."""
+    """Return None for no-op. UNPROTECT only for the bound speaker's own ALLOW."""
     if not turn.is_final or turn.session_id != session_id:
         return None
     if parsed.turn_id != turn.turn_id:
@@ -30,8 +30,13 @@ def resolve_request(turn: SpeechTurn, parsed: ConsentInterpretation,
         return None
     if parsed.intent == Intent.UNCLEAR:
         return req(RequestAction.UNRESOLVED, None, False)
+    bound = (parsed.speaker_ref == SpeakerRef.SELF and match is not None and match.status == "MATCHED"
+             and match.person_id is not None and match.turn_id == turn.turn_id)
     if parsed.intent == Intent.ALLOW:
-        # Recorded only. MVP has no verified reauthorization flow.
+        # Only the speaker's own consent, bound to their face by lip/visibility evidence.
+        # Hearsay ("my friend says it's fine") is OTHER -> recorded, no effect.
+        if bound:
+            return req(RequestAction.UNPROTECT, match.person_id, True)
         return req(RequestAction.REQUEST_ALLOW, None, False)
     # DENY
     if parsed.speaker_ref != SpeakerRef.SELF:

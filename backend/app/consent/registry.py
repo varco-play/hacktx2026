@@ -24,6 +24,7 @@ class Person:
     last_seen_ms: int = 0
     protected_at_ms: Optional[int] = None
     protect_source: Optional[str] = None
+    released_at_ms: Optional[int] = None
 
     @property
     def protected(self) -> bool:
@@ -53,12 +54,22 @@ class PersonRegistry:
         return self.persons.get(person_id) if person_id else None
 
     def protect(self, person_id: str, t_ms: int, source: str) -> bool:
-        """Latch refusal. Returns True if state changed. There is no unprotect."""
+        """Record refusal. Returns True if state changed. Only `unprotect` reverses it."""
         p = self.persons.get(person_id)
         if p is None or p.protected:
             return False
         p.privacy = Privacy.BLURRED_BY_REQUEST
         p.protected_at_ms = t_ms
+        p.protect_source = source
+        return True
+
+    def unprotect(self, person_id: str, t_ms: int, source: str) -> bool:
+        """Subject's own consent (bound by gesture/voice evidence). Returns True if changed."""
+        p = self.persons.get(person_id)
+        if p is None or not p.protected:
+            return False
+        p.privacy = Privacy.VISIBLE_BY_CONSENT
+        p.released_at_ms = t_ms
         p.protect_source = source
         return True
 
