@@ -1,4 +1,28 @@
-# ConsentLens — HackTX 2026 AI Coding-Agent Handoff
+# ConsentLens — HackTX 2026
+
+> **Status (2026-10-24 19:00 CDT):** working MVP draft. Webcam → local face detection → session re-ID → latched privacy → **blurred pixels in saved video**, protected-only live preview, Meta Muse voice path. See `HANDOFF.md` for what is verified vs not.
+
+## Run it (Apple Silicon Mac)
+
+```bash
+python3 -m pip install --user uv && export PATH="$HOME/Library/Python/3.9/bin:$PATH"
+uv python install 3.11 && uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -r requirements.lock.txt
+scripts/fetch_models.sh                 # YuNet, SFace, MediaPipe; checksums verified
+cp .env.example .env                    # then add META_MODEL_API_KEY locally
+.venv/bin/python -m uvicorn backend.app.main:app --port 8000
+```
+
+Open http://127.0.0.1:8000 → **Start session** → **Start voice** → **Start recording**. macOS must allow Camera + Microphone for the app running Python.
+
+- Tests: `.venv/bin/python -m pytest`
+- Replay a file instead of the camera (shown as **TEST INPUT**): `TEST_VIDEO=path.mp4 .venv/bin/python -m uvicorn backend.app.main:app`
+- Dev-only manual protect button: `ENABLE_DEV_CONTROLS=true` (labeled `MANUAL_TEST`; keep off for judges)
+- Developer diagnostic original file (saved locally, never served): `ENABLE_DIAGNOSTIC_ORIGINAL=true`
+
+---
+
+## Handoff spec
 
 **Status:** build specification and researched implementation guidance, **not an implemented project**. **Event:** HackTX 2026, Oct 24–25, Austin. Final submission listed in ceremony: Sun Oct 25, 11:30 AM local; recheck official Devpost/Discord. **Target team:** two developers with Claude Code/Codex. **Device:** MacBook Air M3/M4; no assumed Meta glasses.
 

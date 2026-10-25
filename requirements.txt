@@ -10,3 +10,4 @@ httpx
 websockets
 google-genai
 pytest
+sounddevice

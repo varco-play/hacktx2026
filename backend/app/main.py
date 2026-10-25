@@ -1,0 +1,203 @@
+"""FastAPI surface. Protected media only; no route serves original/source pixels."""
+from __future__ import annotations
+
+import asyncio
+import re
+import secrets
+import sys
+import threading
+import time
+from importlib.metadata import version
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+
+from backend.app.capture import CameraSource, FileSource
+from backend.app.config import ROOT, Settings
+from backend.app.runtime import Session
+from backend.app.vision.detector import FaceModels
+from shared.contracts import PrivacyRequest, RequestAction, RequestOrigin
+
+settings = Settings()
+app = FastAPI(title="ConsentLens")
+_state: dict = {"session": None, "models": None, "voice": None}
+_lock = threading.Lock()
+REC_ID = re.compile(r"^rec_[0-9a-f]{12}$")
+
+
+def _models() -> FaceModels:
+    if _state["models"] is None:
+        _state["models"] = FaceModels(settings.models_dir)
+    return _state["models"]
+
+
+def _session() -> Session:
+    s = _state["session"]
+    if s is None:
+        raise HTTPException(409, "no active session")
+    return s
+
+
+def _pkg(name: str) -> Optional[str]:
+    try:
+        return version(name)
+    except Exception:
+        return None
+
+
+@app.get("/api/health")
+def health():
+    voice = _state["voice"]
+    return {
+        "python": sys.version.split()[0],
+        "packages": {n: _pkg(n) for n in ("opencv-contrib-python", "mediapipe", "av", "fastapi")},
+        "models_present": all((Path(settings.models_dir) / f).is_file() for f in
+                              ("face_detection_yunet_2023mar.onnx", "face_recognition_sface_2021dec.onnx")),
+        "session_active": _state["session"] is not None,
+        "source": settings.test_video and "TEST INPUT" or "CAMERA",
+        "diagnostic_original_enabled": settings.diagnostic_original,
+        "dev_controls_enabled": settings.dev_controls,
+        "meta_key_configured": bool(settings.meta_key),
+        "gemini_key_configured": bool(settings.gemini_key),
+        "voice": voice.status() if voice else {"state": "OFF"},
+    }
+
+
+@app.post("/api/session/start")
+def session_start():
+    with _lock:
+        if _state["session"] is not None:
+            raise HTTPException(409, "session already active (one camera owner)")
+        if settings.test_video:
+            src = FileSource(settings.test_video, settings.width, settings.height, settings.fps)
+            label = f"TEST INPUT: {Path(settings.test_video).name}"
+        else:
+            src = CameraSource(settings.camera_index, settings.width, settings.height, settings.fps)
+            label = "CAMERA"
+        sess = Session(settings, src, _models(), label)
+        try:
+            sess.start()
+        except Exception as exc:
+            raise HTTPException(503, f"could not start capture: {exc}")
+        _state["session"] = sess
+        return {"session_id": sess.session_id, "source": label}
+
+
+@app.post("/api/session/end")
+def session_end():
+    with _lock:
+        sess = _session()
+        voice = _state["voice"]
+        if voice:
+            voice.stop()
+            _state["voice"] = None
+        result = sess.stop()
+        _state["session"] = None
+        return result
+
+
+@app.post("/api/recording/start")
+def recording_start():
+    return _session().start_recording()
+
+
+@app.post("/api/recording/stop")
+def recording_stop():
+    info = _session().stop_recording()
+    if info is None:
+        raise HTTPException(409, "not recording")
+    return info
+
+
+@app.get("/api/state")
+def state():
+    s = _state["session"]
+    if s is None:
+        return {"session_id": None}
+    snap = s.snapshot()
+    voice = _state["voice"]
+    snap["voice"] = voice.status() if voice else {"state": "OFF"}
+    return snap
+
+
+@app.get("/api/preview/protected")
+def preview():
+    sess = _session()
+
+    def gen():
+        last = None
+        while _state["session"] is sess:
+            jpg = sess.latest_jpeg
+            if jpg is not None and jpg is not last:
+                last = jpg
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg + b"\r\n"
+            time.sleep(0.02)
+
+    return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.websocket("/api/events")
+async def events(ws: WebSocket):
+    await ws.accept()
+    try:
+        while True:
+            s = _state["session"]
+            await ws.send_json(state() if s else {"session_id": None})
+            await asyncio.sleep(0.25)
+    except (WebSocketDisconnect, RuntimeError):
+        return
+
+
+@app.get("/api/recordings/{recording_id}/protected")
+def recording_protected(recording_id: str):
+    if not REC_ID.match(recording_id):
+        raise HTTPException(404)
+    s = _state["session"]
+    finished = [r["recording_id"] for r in (s.finished_recordings if s else [])]
+    path = Path(settings.recordings_dir) / f"{recording_id}_protected.mp4"
+    if recording_id not in finished and s is not None:
+        raise HTTPException(409, "recording not finalized")
+    if not path.is_file():
+        raise HTTPException(404)
+    return FileResponse(path, media_type="video/mp4")
+
+
+@app.post("/api/dev/protect/{person_id}")
+def dev_protect(person_id: str):
+    """MANUAL_TEST injection for development. Disabled unless ENABLE_DEV_CONTROLS=true."""
+    if not settings.dev_controls:
+        raise HTTPException(404)
+    sess = _session()
+    if sess.engine.registry.get(person_id) is None:
+        raise HTTPException(404, "unknown person_id")
+    sess.engine.submit(PrivacyRequest(sess.session_id, "dev_" + secrets.token_hex(4),
+                                      RequestOrigin.MANUAL_TEST, None, person_id,
+                                      RequestAction.PROTECT, sess.now_ms(), True))
+    return {"queued": person_id, "origin": "MANUAL_TEST"}
+
+
+@app.post("/api/voice/start")
+def voice_start():
+    from backend.app.voice import VoicePipeline
+    sess = _session()
+    if _state["voice"] is not None:
+        return _state["voice"].status()
+    vp = VoicePipeline(settings, sess)
+    vp.start()
+    _state["voice"] = vp
+    return vp.status()
+
+
+@app.post("/api/voice/stop")
+def voice_stop():
+    vp = _state["voice"]
+    if vp:
+        vp.stop()
+        _state["voice"] = None
+    return {"state": "OFF"}
+
+
+app.mount("/", StaticFiles(directory=str(ROOT / "frontend"), html=True), name="frontend")

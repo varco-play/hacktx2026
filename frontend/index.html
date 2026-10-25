@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConsentLens</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b22; --line:#2a2f3a; --text:#e7e9ee; --muted:#9aa3b2;
+          --ok:#3ecf8e; --warn:#f5a524; --bad:#f31260; --accent:#7c8cff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 -apple-system,system-ui,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0 8px 0 0; }
+  .pill { padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--muted); font-size:12px; }
+  .pill.ok { color:var(--ok); border-color:var(--ok); } .pill.warn { color:var(--warn); border-color:var(--warn); }
+  .pill.bad { color:var(--bad); border-color:var(--bad); }
+  main { display:grid; grid-template-columns: minmax(0,1.4fr) minmax(0,1fr); gap:16px; padding:16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px; min-width:0; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 8px; }
+  #preview { width:100%; aspect-ratio:4/3; background:#000; border-radius:6px; display:block; object-fit:contain; }
+  .controls { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  button { background:#232838; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:7px 12px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); } button.primary { background:var(--accent); color:#0b0d12; border-color:var(--accent); }
+  button.danger { border-color:var(--bad); color:var(--bad); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td, th { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:500; }
+  .log { max-height:260px; overflow:auto; font:12px ui-monospace,Menlo,monospace; }
+  .log div { padding:3px 0; border-bottom:1px dashed var(--line); overflow-wrap:anywhere; }
+  .metrics { color:var(--muted); font-size:12px; margin-top:8px; }
+  .banner { margin-top:8px; padding:6px 10px; border-radius:6px; background:#3a2a00; color:var(--warn); display:none; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>ConsentLens</h1>
+  <span class="pill" id="src">no session</span>
+  <span class="pill" id="out">—</span>
+  <span class="pill" id="rec">not recording</span>
+  <span class="pill" id="voice">voice off</span>
+  <span class="pill">Mac webcam = glasses stand-in</span>
+</header>
+<main>
+  <div>
+    <section>
+      <h2>Protected live preview</h2>
+      <img id="preview" alt="Protected preview">
+      <div class="banner" id="testBanner"></div>
+      <div class="controls">
+        <button class="primary" id="bStart">Start session</button>
+        <button id="bRec">Start recording</button>
+        <button id="bVoice">Start voice</button>
+        <button class="danger" id="bEnd">End session</button>
+      </div>
+      <div class="metrics" id="metrics"></div>
+    </section>
+    <section style="margin-top:16px">
+      <h2>Recordings (protected only)</h2>
+      <div id="recs" class="log">none yet</div>
+    </section>
+  </div>
+  <div>
+    <section>
+      <h2>People in this session</h2>
+      <table><thead><tr><th>Person</th><th>Privacy</th><th>Visible</th><th></th></tr></thead><tbody id="people"></tbody></table>
+      <div class="metrics">"Visible, no request" is not consent. Refusals stay latched for the session.</div>
+    </section>
+    <section style="margin-top:16px">
+      <h2>Voice turns</h2>
+      <div id="turns" class="log">—</div>
+    </section>
+    <section style="margin-top:16px">
+      <h2>Privacy timeline</h2>
+      <div id="events" class="log">—</div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let health = {}, st = {}, previewOn = false;
+
+async function api(path, method = "POST") {
+  const r = await fetch(path, { method });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) alert(`${path}: ${j.detail || r.status}`);
+  return j;
+}
+function pill(el, text, cls) { el.textContent = text; el.className = "pill " + (cls || ""); }
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+$("bStart").onclick = async () => { await api("/api/session/start"); previewOn = false; };
+$("bEnd").onclick = async () => { await api("/api/session/end"); $("preview").removeAttribute("src"); previewOn = false; };
+$("bRec").onclick = async () => { await api(st.recording ? "/api/recording/stop" : "/api/recording/start"); };
+$("bVoice").onclick = async () => {
+  const live = st.voice && st.voice.state !== "OFF";
+  await api(live ? "/api/voice/stop" : "/api/voice/start");
+};
+async function devProtect(pid) { await api(`/api/dev/protect/${encodeURIComponent(pid)}`); }
+
+function render() {
+  const active = !!st.session_id;
+  if (active && !previewOn) { $("preview").src = "/api/preview/protected?" + Date.now(); previewOn = true; }
+  if (!active) { pill($("src"), "no session"); pill($("out"), "—"); }
+  else {
+    const test = String(st.source).startsWith("TEST INPUT");
+    pill($("src"), st.source, test ? "warn" : "ok");
+    $("testBanner").style.display = test ? "block" : "none";
+    $("testBanner").textContent = test ? "TEST INPUT — replayed file, not the live camera" : "";
+    const o = st.output_state;
+    pill($("out"), "output: " + o, o === "NORMAL" ? "ok" : o === "ERROR" ? "bad" : "warn");
+  }
+  pill($("rec"), st.recording ? `recording ${st.recording.frames} frames` : "not recording", st.recording ? "bad" : "");
+  $("bRec").textContent = st.recording ? "Stop recording" : "Start recording";
+  const v = st.voice || { state: "OFF" };
+  pill($("voice"), `voice ${v.state}${v.detail ? " · " + v.detail : ""}`,
+       v.state === "LIVE" ? "ok" : v.state === "OFF" ? "" : "warn");
+  $("bVoice").textContent = v.state !== "OFF" ? "Stop voice" : "Start voice";
+
+  const m = st.metrics || {};
+  $("metrics").textContent = active ? `measured: ${m.processed_fps ?? "–"} fps · vision p50 ${m.vision_ms_p50 ?? "–"} ms · p95 ${m.vision_ms_p95 ?? "–"} ms · frames ${m.frames ?? 0}${st.error ? " · ERROR " + st.error : ""}` : "";
+
+  const visible = new Map((st.tracks || []).filter(t => t.person_id).map(t => [t.person_id, t]));
+  const pending = (st.tracks || []).filter(t => !t.person_id);
+  let rows = (st.persons || []).map(p => {
+    const t = visible.get(p.person_id);
+    const prot = p.privacy === "BLURRED_BY_REQUEST";
+    const btn = health.dev_controls_enabled && !prot ? `<button onclick="devProtect('${esc(p.person_id)}')" title="development only">MANUAL_TEST protect</button>` : "";
+    return `<tr><td>${esc(p.person_id)}</td><td style="color:${prot ? "var(--bad)" : "var(--muted)"}">${prot ? "BLURRED (" + esc(p.protect_source) + ")" : "visible, no request"}</td><td>${t ? (t.coasting ? "lost (shielding)" : "yes") : "no"}</td><td>${btn}</td></tr>`;
+  });
+  rows = rows.concat(pending.map(t => `<tr><td>${esc(t.track_id)}</td><td style="color:var(--warn)">${esc(t.identity_status)}${t.shielded ? " · shielded" : ""}</td><td>yes</td><td></td></tr>`));
+  $("people").innerHTML = rows.join("") || `<tr><td colspan="4" style="color:var(--muted)">no faces yet</td></tr>`;
+
+  $("turns").innerHTML = (v.turns || []).slice().reverse().map(t =>
+    `<div>“${esc(t.text)}” → <b>${esc(t.intent)}</b>/${esc(t.speaker_ref)} via ${esc(t.source)} · speaker ${esc(t.speaker_status)} (${esc(t.speaker_method)}) · ${esc(t.action || "no-op")}${t.target ? " → " + esc(t.target) : ""}</div>`).join("") || "—";
+  $("events").innerHTML = (st.events || []).slice().reverse().map(e =>
+    `<div>${(e.t_ms / 1000).toFixed(1)}s ${esc(e.type)} ${esc(e.person_id || "")} ${e.source ? "[" + esc(e.source) + "]" : ""}</div>`).join("") || "—";
+  const recs = st.finished_recordings || [];
+  $("recs").innerHTML = recs.length ? recs.slice().reverse().map(r =>
+    `<div><a href="/api/recordings/${esc(r.recording_id)}/protected" target="_blank">${esc(r.recording_id)} protected.mp4</a> · ${r.frames} frames${r.error ? " · ERROR " + esc(r.error) : ""}${r.has_diagnostic_original ? " · diagnostic original saved locally (not served)" : ""}</div>`).join("") : "none yet";
+}
+
+async function boot() {
+  health = await (await fetch("/api/health")).json();
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const connect = () => {
+    const ws = new WebSocket(`${proto}://${location.host}/api/events`);
+    ws.onmessage = (ev) => { st = JSON.parse(ev.data); render(); };
+    ws.onclose = () => setTimeout(connect, 1000);
+  };
+  connect();
+}
+boot();
+</script>
+</body>
+</html>
