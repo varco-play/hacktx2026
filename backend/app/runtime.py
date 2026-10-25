@@ -71,6 +71,7 @@ class Session:
         self.governor = ThermalGovernor(settings.profile)
         self.e2e_ms = deque(maxlen=120)
         self.rate_skipped = 0
+        self.analyzed = 0
         self.camera_connected = True
         self._proc = None
 
@@ -158,12 +159,13 @@ class Session:
 
     def _loop(self) -> None:
         next_due = 0.0
+        next_analysis = 0.0
         while not self._stop.is_set():
             change = self.governor.tick()
             if change:
                 self._source_event(change, {"thermal": self.governor.state, "profile": self.governor.active})
             prof = self.governor.profile()
-            self.engine.signals_every = prof["signals_every"]
+            self.engine.signals_every = 1  # cadence is decided here via `analyze`
             f = self.capture.take(timeout_s=0.5)
             if f is None:
                 if not self.capture.connected:
@@ -184,8 +186,13 @@ class Session:
             self.frame_id += 1
             frame, t_ms = f.bgr, f.t_capture_ms
             pkt = FramePacket(self.session_id, self.frame_id, t_ms, frame)
+            a_int = 1.0 / prof["analyze_hz"]
+            analyze = admit_frame(now, next_analysis, a_int)
+            if analyze:
+                next_analysis = max(next_analysis + a_int, now)
+                self.analyzed += 1
             try:
-                res = self.engine.step(pkt)
+                res = self.engine.step(pkt, analyze=analyze)
                 protected = res.protected_bgr
                 state = res.output_state
                 self.vision_ms.append(res.vision_ms)
@@ -197,7 +204,9 @@ class Session:
             with self._lock:
                 if self.recorder is not None:
                     self.recorder.write(frame, protected, t_ms)
-            ok, jpg = cv2.imencode(".jpg", preview_labels(protected, tracks),
+            # labels are drawn by the dashboard overlay now (crisper, animated); burn-in only if asked
+            shown = preview_labels(protected, tracks) if self.settings.burn_in_labels else protected
+            ok, jpg = cv2.imencode(".jpg", shown,
                                    [cv2.IMWRITE_JPEG_QUALITY, prof["jpeg_quality"]])
             if ok:
                 self.latest_jpeg = jpg.tobytes()
@@ -225,7 +234,8 @@ class Session:
                 "vision_ms_p50": pct(self.vision_ms, .5), "vision_ms_p95": pct(self.vision_ms, .95),
                 "e2e_ms_p50": pct(self.e2e_ms, .5), "e2e_ms_p95": pct(self.e2e_ms, .95),
                 "frames": self.frame_id, "captured": self.capture.frames_in,
-                "dropped": self.capture.dropped, "rate_skipped": self.rate_skipped, "queue_depth": self.capture.queue_depth(),
+                "dropped": self.capture.dropped, "rate_skipped": self.rate_skipped, "analyzed": self.analyzed,
+                "analyze_hz": self.governor.profile()["analyze_hz"], "queue_depth": self.capture.queue_depth(),
                 "active_tracks": len([t for t in self.latest_tracks if not t.get("coasting")]),
                 "cpu_percent": cpu, "rss_mb": rss,
                 "profile": self.governor.active, "profile_chosen": self.governor.chosen,

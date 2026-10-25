@@ -108,11 +108,16 @@ def match_speaker(turn: SpeechTurn, visibility_history, audio_env: Optional[list
             c = _corr(ts, lips, env_t, env_v) if act >= noise_floor(pid, history, audio_env) else 0.0
             scored.append((c, act, pid))
         scored.sort(reverse=True)
-        top_c, _, top_pid = scored[0]
+        top_c, top_act, top_pid = scored[0]
         runner = scored[1][0] if len(scored) > 1 else -1.0
         if len(present) == 1:
-            if top_c >= AV_SINGLE_MIN:
-                return SpeakerMatch(turn.turn_id, top_pid, "av_sync", round(top_c, 3), round(top_c, 3), "MATCHED")
+            # One person in view: their lips merely MOVING above their own quiet-time level is
+            # enough (laptop mics make tight audio-visual correlation unreliable). Still lips =
+            # the voice came from someone off camera -> no target.
+            moved = top_act >= noise_floor(top_pid, history, audio_env)
+            if top_c >= AV_SINGLE_MIN or moved:
+                return SpeakerMatch(turn.turn_id, top_pid, "av_sync" if top_c >= AV_SINGLE_MIN else "lips_moved",
+                                    round(top_c, 3), round(top_c, 3), "MATCHED")
             return SpeakerMatch(turn.turn_id, None, "av_sync", round(top_c, 3), 0.0, "OFFSCREEN")
         if top_c >= AV_MIN_CORR and top_c - runner >= AV_MARGIN:
             return SpeakerMatch(turn.turn_id, top_pid, "av_sync", round(top_c, 3), round(top_c - runner, 3), "MATCHED")

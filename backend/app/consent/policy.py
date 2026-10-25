@@ -29,7 +29,10 @@ def resolve_request(turn: SpeechTurn, parsed: ConsentInterpretation,
     if parsed.intent == Intent.NO_REQUEST:
         return None
     if parsed.intent == Intent.UNCLEAR:
-        return req(RequestAction.UNRESOLVED, None, False)
+        # Unclear chatter is NOT a privacy request: no-op. (It used to shield everyone for 3 s,
+        # which looked like "blurring out of nowhere" in live tests.) Only a clear refusal whose
+        # speaker can't be identified triggers the temporary shield below.
+        return None
     bound = (parsed.speaker_ref == SpeakerRef.SELF and match is not None and match.status == "MATCHED"
              and match.person_id is not None and match.turn_id == turn.turn_id)
     if parsed.intent == Intent.ALLOW:

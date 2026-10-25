@@ -11,11 +11,12 @@ from __future__ import annotations
 import time
 
 PROFILES = {
-    # process_fps: frames analysed per second (others dropped, never queued)
-    # signals_every: run MediaPipe landmarks every Nth processed frame (reuse last otherwise)
-    "ECO": {"process_fps": 10, "signals_every": 2, "jpeg_quality": 70},
-    "BALANCED": {"process_fps": 15, "signals_every": 1, "jpeg_quality": 80},
-    "QUALITY": {"process_fps": 30, "signals_every": 1, "jpeg_quality": 85},
+    # process_fps: frames that get the cheap path (detect + track + blur + encode) — this is
+    #              what you SEE and what gets RECORDED, so keep it smooth.
+    # analyze_hz:  frames that also run MediaPipe face/hand/pose + gestures (the expensive part).
+    "ECO": {"process_fps": 15, "analyze_hz": 8, "jpeg_quality": 70},
+    "BALANCED": {"process_fps": 30, "analyze_hz": 15, "jpeg_quality": 80},  # 15 Hz = live-tested MVP rate
+    "QUALITY": {"process_fps": 30, "analyze_hz": 30, "jpeg_quality": 85},
 }
 THERMAL_NAMES = {0: "nominal", 1: "fair", 2: "serious", 3: "critical"}
 

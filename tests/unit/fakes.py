@@ -45,6 +45,8 @@ class Script:
 def packet(i, session="s_test"):
     img = np.full((H, W, 3), 128, np.uint8)
     img[:, :, 0] = (np.arange(W) % 256).astype(np.uint8)[None, :]  # textured so blur changes pixels
+    yy, xx = np.mgrid[0:H, 0:W]
+    img[:, :, 1] = (((xx // 6 + yy // 6) % 2) * 200).astype(np.uint8)  # fine checker: real faces have texture
     img.setflags(write=False)
     return FramePacket(session, i, i * 66, img)
 

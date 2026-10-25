@@ -42,7 +42,10 @@ async def require_app_header(request, call_next):
     if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
         from fastapi.responses import JSONResponse
         return JSONResponse({"detail": "missing X-ConsentLens header"}, status_code=403)
-    return await call_next(request)
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.endswith(".html"):
+        response.headers["Cache-Control"] = "no-store"  # a reload always gets the current dashboard
+    return response
 _state: dict = {"session": None, "models": None, "voice": None, "storage": None, "companion": None}
 
 
@@ -84,7 +87,6 @@ def _pkg(name: str) -> Optional[str]:
 
 @app.get("/api/health")
 def health():
-    voice = _state["voice"]
     return {
         "python": sys.version.split()[0],
         "packages": {n: _pkg(n) for n in ("opencv-contrib-python", "mediapipe", "av", "fastapi")},
@@ -95,10 +97,11 @@ def health():
         "cameras": [d["name"] for d in list_video_devices()],
         "diagnostic_original_enabled": settings.diagnostic_original,
         "dev_controls_enabled": settings.dev_controls,
+        "voice_enabled": settings.voice_enabled,
         "meta_key_configured": bool(settings.meta_key),
         "recording_storage": "r2" if _storage() else "local (R2 not configured: missing " + ", ".join(_missing_r2()) + ")",
         "gemini_key_configured": bool(settings.gemini_key),
-        "voice": voice.status() if voice else {"state": "OFF"},
+        "voice": _voice_public(),
     }
 
 
@@ -148,6 +151,16 @@ def session_start(source: str = ""):
         except Exception as exc:
             raise HTTPException(503, f"could not start capture: {exc}")
         _state["session"] = sess
+        if settings.voice_enabled and _state["voice"] is None:
+            # Voice commands run automatically with the session (no button). Failure to get the
+            # mic or API never blocks the camera session; status shows UNAVAILABLE instead.
+            try:
+                from backend.app.voice import VoicePipeline
+                vp = VoicePipeline(settings, sess)
+                vp.start()
+                _state["voice"] = vp
+            except Exception:
+                _state["voice"] = None
         return {"session_id": sess.session_id, "source": label}
 
 
@@ -221,9 +234,21 @@ def state():
     if s is None:
         return {"session_id": None}
     snap = s.snapshot()
-    voice = _state["voice"]
-    snap["voice"] = voice.status() if voice else {"state": "OFF"}
+    snap["voice"] = _voice_public()
     return snap
+
+
+def _voice_public() -> dict:
+    """Voice status WITHOUT transcripts: the UI/API never exposes what people said, only the
+    outcome of the last command."""
+    vp = _state["voice"]
+    if vp is None:
+        return {"state": "OFF" if settings.voice_enabled else "DISABLED"}
+    st = vp.status()
+    keep = ("intent", "action", "target", "speaker_status", "speaker_method", "source", "decide_ms",
+            "apply_delay_ms", "early_partial", "turn_id")
+    last = [{k: t.get(k) for k in keep} for t in st.get("turns", [])][-5:]
+    return {"state": st["state"], "detail": st.get("detail", ""), "intent_engine": st.get("intent"), "recent": last}
 
 
 @app.get("/api/preview/protected")
@@ -248,11 +273,16 @@ async def events(ws: WebSocket):
         await ws.close(code=1008)
         return
     await ws.accept()
+    import json
+    last = None
     try:
         while True:
             s = _state["session"]
-            await ws.send_json(state() if s else {"session_id": None})
-            await asyncio.sleep(0.25)
+            payload = json.dumps(state() if s else {"session_id": None}, default=str)
+            if payload != last:  # one local socket; only push when something changed
+                await ws.send_text(payload)
+                last = payload
+            await asyncio.sleep(0.1)  # 10 Hz so the face overlay keeps up with people moving
     except (WebSocketDisconnect, RuntimeError):
         return
 
@@ -293,14 +323,15 @@ def dev_protect(person_id: str):
 
 @app.post("/api/voice/start")
 def voice_start():
+    if not settings.voice_enabled:
+        raise HTTPException(404, "voice is disabled (set VOICE=on to enable)")
     from backend.app.voice import VoicePipeline
     sess = _session()
-    if _state["voice"] is not None:
-        return _state["voice"].status()
-    vp = VoicePipeline(settings, sess)
-    vp.start()
-    _state["voice"] = vp
-    return vp.status()
+    if _state["voice"] is None:
+        vp = VoicePipeline(settings, sess)
+        vp.start()
+        _state["voice"] = vp
+    return _voice_public()
 
 
 @app.post("/api/voice/stop")

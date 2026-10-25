@@ -38,17 +38,20 @@ def frames(path):
 def run(path, profile, seconds, models):
     prof = PROFILES[profile]
     eng = VisionEngine("bench", models.detect, models.feature, signals=Signals("models"))
-    eng.signals_every = prof["signals_every"]
     proc = psutil.Process()
     proc.cpu_percent(None)
     lat, faces, t0, n = [], 0, time.monotonic(), 0
     interval = 1.0 / prof["process_fps"]
+    a_int, next_a = 1.0 / prof["analyze_hz"], 0.0
     for img in frames(path):
         start = time.monotonic()
         if start - t0 > seconds:
             break
         n += 1
-        r = eng.step(FramePacket("bench", n, int((start - t0) * 1000), img))
+        analyze = start >= next_a - 0.25 * a_int
+        if analyze:
+            next_a = max(next_a + a_int, start)
+        r = eng.step(FramePacket("bench", n, int((start - t0) * 1000), img), analyze=analyze)
         lat.append((time.monotonic() - start) * 1000)
         faces = max(faces, len([t for t in r.tracks if not t["coasting"]]))
         spare = interval - (time.monotonic() - start)
@@ -56,7 +59,7 @@ def run(path, profile, seconds, models):
             time.sleep(spare)  # pace like the live loop at the profile's rate
     lat.sort()
     el = time.monotonic() - t0
-    return {"profile": profile, "target_fps": prof["process_fps"], "fps": round(n / el, 1),
+    return {"profile": profile, "target_fps": f'{prof["process_fps"]} (analysis {prof["analyze_hz"]} Hz)', "fps": round(n / el, 1),
             "engine_ms_p50": round(lat[len(lat) // 2], 1), "engine_ms_p95": round(lat[int(.95 * len(lat))], 1),
             "cpu_percent": round(proc.cpu_percent(None), 1), "rss_mb": round(proc.memory_info().rss / 2**20),
             "max_faces": faces, "frames": n}

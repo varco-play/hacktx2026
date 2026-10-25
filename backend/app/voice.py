@@ -206,7 +206,10 @@ class VoicePipeline:
             record.update(intent="UNCLEAR", source="none", action=None)
             self.turns.append(record)
             return record
-        match = match_speaker(turn, self.session.engine.visibility_history(), self.audio_envelope())
+        # Live-tested MVP binding: lip motion (+ single visible person). The audio-visual sync
+        # variant (SPEAKER_AV=on) is experimental — it missed real "unblur me" turns on a laptop mic.
+        env = self.audio_envelope() if os.getenv("SPEAKER_AV", "off").lower() in ("1", "on", "true") else None
+        match = match_speaker(turn, self.session.engine.visibility_history(), env)
         req = resolve_request(turn, parsed, match, self.session.session_id, f"voice_{turn.turn_id}")
         if req is not None:
             self.session.engine.submit(req)

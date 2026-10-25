@@ -30,6 +30,7 @@ def is_peace(pts: np.ndarray) -> bool:
     pts: (21, 2) pixel landmarks.
     """
     palm = float(np.linalg.norm(pts[9] - pts[0])) + 1e-6
+    # Live-tested MVP thresholds (2/2 real peace signs detected, 0 false releases on replays).
     straight = lambda m, p, d, t: _angle(pts[m], pts[p], pts[t]) > 155 and _angle(pts[p], pts[d], pts[t]) > 150
     bent = lambda m, p, t: _angle(pts[m], pts[p], pts[t]) < 120
     if not (straight(5, 6, 7, 8) and straight(9, 10, 11, 12)):
@@ -62,7 +63,9 @@ class _Landmarkers:
                 running_mode=vision.RunningMode.VIDEO, num_hands=max_hands,
                 min_hand_detection_confidence=0.5, min_tracking_confidence=0.5))
         self.pose = None
-        if (models_dir / "pose_landmarker_lite.task").is_file():
+        import os
+        if os.getenv("POSE_TRACKING", "off").lower() in ("1", "on", "true") and \
+                (models_dir / "pose_landmarker_lite.task").is_file():
             self.pose = vision.PoseLandmarker.create_from_options(vision.PoseLandmarkerOptions(
                 base_options=mpt.BaseOptions(model_asset_path=str(models_dir / "pose_landmarker_lite.task")),
                 running_mode=vision.RunningMode.VIDEO, num_poses=max_faces,
@@ -162,7 +165,8 @@ class Signals:
             c = (pt(EYE_L) + pt(EYE_R) + pt(UPPER_INNER)) / 3
             faces.append({"c": (float(c[0]), float(c[1])),
                           "mouth": float(np.linalg.norm(pt(UPPER_INNER) - pt(LOWER_INNER)) / eye),
-                          "eyes_closed": float(min(bs.get("eyeBlinkLeft", 0.0), bs.get("eyeBlinkRight", 0.0)))})
+                          "eyes_closed": float(min(bs.get("eyeBlinkLeft", 0.0), bs.get("eyeBlinkRight", 0.0))),
+                          "look_down": float(min(bs.get("eyeLookDownLeft", 0.0), bs.get("eyeLookDownRight", 0.0)))})
         hands = heads = None
         if lm.pose is not None and not do_hands:
             heads = []

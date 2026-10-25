@@ -19,22 +19,46 @@ def pad_box(box, frame_shape, pad: float = 0.45):
     return x0, y0, x1, y1
 
 
-def pixelate_region(img: np.ndarray, x0: int, y0: int, x1: int, y1: int) -> None:
-    roi = img[y0:y1, x0:x1]
-    if roi.size == 0:
-        return
+def obscure(roi: np.ndarray) -> np.ndarray:
+    """Irreversible frosted blur: ~12x downscale destroys facial detail, then smooth upscale."""
     h, w = roi.shape[:2]
-    small = cv2.resize(roi, (max(1, w // 16), max(1, h // 16)), interpolation=cv2.INTER_LINEAR)
-    blocky = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
-    img[y0:y1, x0:x1] = cv2.GaussianBlur(blocky, (0, 0), sigmaX=max(2, w / 20))
+    small = cv2.resize(roi, (max(2, w // 12), max(2, h // 12)), interpolation=cv2.INTER_AREA)
+    up = cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+    return cv2.GaussianBlur(up, (0, 0), sigmaX=max(2.0, w / 18))
+
+
+def oval_mask(w: int, h: int) -> np.ndarray:
+    """Float mask 0..1: solid ellipse filling the box, feathered only at its outer rim.
+    The face box sits at ~0.5 of the ellipse radius after padding, so the soft edge never
+    reaches facial features."""
+    m = np.zeros((h, w), np.uint8)
+    cv2.ellipse(m, (w // 2, h // 2), (max(1, int(w * 0.48)), max(1, int(h * 0.48))), 0, 0, 360, 255, -1)
+    m = cv2.GaussianBlur(m, (0, 0), sigmaX=max(1.5, min(w, h) * 0.035))
+    return (m.astype(np.float32) / 255.0)[..., None]
+
+
+def blur_oval(img: np.ndarray, box) -> None:
+    """The ellipse is built on the UNCLIPPED padded box, then cropped to the frame, so a face
+    at the image border is still fully inside the oval (clipping first would shrink it)."""
+    H, W = img.shape[:2]
+    x, y, w, h = box
+    pad = 0.45
+    ux0, uy0 = int(x - w * pad), int(y - h * pad * 1.2)
+    ux1, uy1 = int(x + w + w * pad), int(y + h + h * pad)
+    x0, y0, x1, y1 = max(0, ux0), max(0, uy0), min(W, ux1), min(H, uy1)
+    if x1 <= x0 or y1 <= y0:
+        return
+    full = oval_mask(ux1 - ux0, uy1 - uy0)
+    a = full[y0 - uy0:y1 - uy0, x0 - ux0:x1 - ux0]
+    roi = img[y0:y1, x0:x1]
+    img[y0:y1, x0:x1] = (obscure(roi).astype(np.float32) * a + roi.astype(np.float32) * (1 - a)).astype(np.uint8)
 
 
 def render_protected(src: np.ndarray, regions: list) -> np.ndarray:
-    """regions: list of (x, y, w, h) boxes to obscure. Never mutates `src`."""
+    """regions: list of (x, y, w, h) boxes to obscure with an oval blur. Never mutates `src`."""
     out = src.copy()
     for box in regions:
-        x0, y0, x1, y1 = pad_box(box, out.shape)
-        pixelate_region(out, x0, y0, x1, y1)
+        blur_oval(out, box)
     return out
 
 

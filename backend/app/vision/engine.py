@@ -43,10 +43,12 @@ class EngineConfig:
     q_max_yaw: float = 0.35      # |nose - eye midpoint| / eye distance
     # tracking
     coast_ms: int = 1200         # keep a lost box (shielded if protected/pending) this long
+    continuity_ms: int = 3000    # a face reappearing where a known person was lost <3 s ago is them
     pending_timeout: int = 90
     unresolved_shield_ms: int = 3000
     # gestures
-    eyes_closed_thr: float = 0.50
+    eyes_closed_thr: float = 0.50  # both eyes (live-tested MVP value)
+    look_down_veto: float = 1.01   # disabled (was 0.55); kept configurable
     eyes_hold_ms: int = 2000     # eyes closed this long -> blur me
     cover_hold_ms: int = 1500    # hand(s) over both eyes this long -> blur me
     peace_hold_ms: int = 1000    # peace sign this long -> unblur me (own face only)
@@ -61,6 +63,9 @@ class GestureState:
     cover_since: Optional[int] = None
     peace_since: Optional[int] = None
     cooldown_until: int = -1
+    eyes_last: int = 0
+    cover_last: int = 0
+    peace_last: int = 0
     eyes_closed: float = 0.0
     covered: bool = False
     peace: bool = False
@@ -111,6 +116,8 @@ class VisionEngine:
         self.feature = feature      # (bgr, Detection) -> unit (1,128) feature
         self.signals = signals      # optional (bgr, t_ms) -> {"faces": [...], "hands": [...]}
         self.strict = False         # PRIVACY_DEFAULT=protect: blur everyone until they consent
+        self.follow_heads = False   # pose head-following (experimental; can drift onto neighbours)
+        self._lost: list = []       # (person_id, last box, last_seen_ms) of recently expired tracks
         self.signals_every = 1      # quality profile: run landmarks every Nth frame, reuse otherwise
         self._sig_n = 0
         self._sig_last = {"faces": [], "hands": [], "heads": []}
@@ -142,7 +149,10 @@ class VisionEngine:
         return [t.person_id for t in self.tracks if t.person_id and t.missed == 0]
 
     # ---- main step -----------------------------------------------------
-    def step(self, pkt: FramePacket) -> FrameResult:
+    def step(self, pkt: FramePacket, analyze: bool = True) -> FrameResult:
+        """analyze=False is the cheap per-frame path (detect + track + identity + blur, ~5-8 ms)
+        so the preview and recording run at camera rate; MediaPipe landmarks, head-following
+        and gestures run only on analysis frames (quality profile sets their rate)."""
         t0 = time.perf_counter()
         events: list[dict] = []
         try:
@@ -150,12 +160,15 @@ class VisionEngine:
             dets = self.detect(pkt.bgr)
             self._associate(dets, pkt)
             self._identify(pkt, events)
-            sig = self._signals(pkt)
-            self._follow_heads(pkt, sig)
-            mouths = self._map_faces(sig)
-            self._gestures(pkt, sig, events)
-            with self._vis_lock:
-                self._visibility.append((pkt.t_ms, tuple(self.visible_person_ids()), mouths))
+            if analyze:
+                sig = self._signals(pkt)
+                if self.follow_heads:
+                    self._follow_heads(pkt, sig)  # off by default: can drift onto a nearby person
+                mouths = self._map_faces(sig)
+                self._gestures(pkt, sig, events)
+                with self._vis_lock:
+                    self._visibility.append((pkt.t_ms, tuple(self.visible_person_ids()), mouths))
+            # (light frames: head-followed tracks stay alive via coast_ms > analysis interval)
             regions, state = self._decide_regions(pkt)
             out = render_protected(pkt.bgr, regions) if regions else pkt.bgr.copy()
         except Exception as exc:  # fail closed: no source pixels on error
@@ -226,7 +239,14 @@ class VisionEngine:
             if ti not in used_t:
                 t.missed += 1
                 t.det = None
-        self.tracks = [t for t in self.tracks if pkt.t_ms - t.last_seen_ms <= self.cfg.coast_ms]
+        keep = []
+        for t in self.tracks:
+            if pkt.t_ms - t.last_seen_ms <= self.cfg.coast_ms:
+                keep.append(t)
+            elif t.person_id:  # remember where a known person was last seen (position continuity)
+                self._lost.append((t.person_id, t.box, t.last_seen_ms))
+        self.tracks = keep
+        self._lost = [l for l in self._lost if pkt.t_ms - l[2] <= self.cfg.continuity_ms]
         for di, d in enumerate(dets):
             if di not in used_d:
                 self.tracks.append(Track(track_id=f"track_{next(self._tid)}", box=d.box, det=d,
@@ -250,23 +270,12 @@ class VisionEngine:
         return abs(nose[0] - mid[0]) / eye <= c.q_max_yaw and abs(le[1] - re_[1]) / eye <= 0.35
 
     def _identify(self, pkt: FramePacket, events: list) -> None:
-        """Privacy-minimal identity: face features are STORED only for people who asked to
-        be blurred. Everyone else is position-tracked; their features are computed only to
-        check "is this a protected person?" and then discarded."""
+        """Session identity as in the live-tested MVP (f251ec0): every person keeps a small
+        in-memory face gallery for the session (deleted at session end), so a person whose
+        track briefly breaks is recognised as THEMSELF within a few frames instead of being
+        treated as an unknown face (which is what blurred bystanders in later versions)."""
         cfg = self.cfg
-        self._forget_departed_visible()
         live_bound = {t.person_id for t in self.tracks if t.person_id and t.missed == 0}
-
-        def protected_galleries(exclude=()):
-            return [(q.person_id, q.gallery) for q in self.registry.persons.values()
-                    if q.protected and q.gallery and q.person_id not in live_bound and q.person_id not in exclude]
-
-        def best_match(f, cands):
-            scores = sorted(((max(cosine(f, g) for g in gal), pid) for pid, gal in cands), reverse=True)
-            best, pid = scores[0] if scores else (-1.0, None)
-            second = scores[1][0] if len(scores) > 1 else -1.0
-            return best, pid, second
-
         for t in self.tracks:
             if t.det is None:
                 continue
@@ -274,48 +283,63 @@ class VisionEngine:
             p = self.registry.get(t.person_id)
             if p is not None:
                 p.last_seen_ms = pkt.t_ms
-                if p.protected:
-                    self._maintain_protected(pkt, t, p, good, live_bound, events)
-                elif good and t.age % cfg.gallery_every == 0:
-                    cands = protected_galleries()
-                    if cands:  # did this visible track drift onto a protected person's face?
-                        f = self.feature(pkt.bgr, t.det)
-                        best, pid, second = best_match(f, cands)
-                        del f  # never stored for visible people
-                        if best >= cfg.t_match + cfg.margin and best - second >= cfg.margin:
-                            t.swap_count += 1
-                            if t.swap_count >= 2:
-                                events.append(self._event(pkt, "IDENTITY_RECHECK", p.person_id,
-                                                          details={"track_id": t.track_id, "matches": pid}))
-                                self._bind(pkt, t, self.registry.get(pid), IdentityStatus.MATCHED, best, events)
-                                live_bound.add(pid)
-                        else:
+                if good and (len(p.gallery) < 3 or t.age % cfg.gallery_every == 0):
+                    f = self.feature(pkt.bgr, t.det)
+                    own = max((cosine(f, g) for g in p.gallery), default=1.0)
+                    # A real ID swap = this face now clearly matches a DIFFERENT known person.
+                    # Low similarity to everyone is just a bad angle: keep the identity.
+                    other = max((max(cosine(f, g) for g in q.gallery) for q in self.registry.persons.values()
+                                 if q.person_id != p.person_id and q.gallery), default=-1.0)
+                    if own < cfg.recheck_sim and other >= cfg.t_match:
+                        t.swap_count += 1
+                        if t.swap_count >= cfg.recheck_votes:
+                            events.append(self._event(pkt, "IDENTITY_RECHECK", p.person_id,
+                                                      details={"track_id": t.track_id, "own_sim": round(own, 2),
+                                                               "other_sim": round(other, 2)}))
+                            live_bound.discard(t.person_id)
+                            t.person_id, t.status = None, IdentityStatus.IDENTITY_PENDING
+                            t.vote_pid, t.vote_count, t.pending_frames, t.swap_count = None, 0, 0, 0
+                    else:
+                        if own >= cfg.recheck_sim:
                             t.swap_count = 0
+                        if own >= 0.5:
+                            p.add_feature(f)
                 continue
 
-            # pending track: is this a protected person coming back, or someone new?
+            # pending track: someone we know (returning / track broke), or someone new?
             t.pending_frames += 1
             if t.pending_frames > cfg.pending_timeout:
                 t.status = IdentityStatus.AMBIGUOUS_MATCH
-            someone_protected_missing = any(q.protected and q.person_id not in live_bound
-                                            for q in self.registry.persons.values())
-            if not someone_protected_missing:
-                # Nobody who asked for blur is unaccounted for, so this face can't be them:
-                # give it an ID right away — no face features computed at all.
-                person = self.registry.new_person(pkt.t_ms)
-                self._bind(pkt, t, person, IdentityStatus.CONFIRMED_NEW, -1.0, events)
-                live_bound.add(person.person_id)
+            pid = self._continuity(t, pkt, live_bound)
+            if pid is not None:
+                self._bind(pkt, t, self.registry.get(pid), IdentityStatus.MATCHED, -1.0, events,
+                           method="position_continuity")
+                live_bound.add(pid)
                 continue
             if not good:
+                # Small / turned faces never give a clean sample. If nobody protected is
+                # unaccounted for, they can't be a protected person: give them an ID so they
+                # can still use gestures (their gallery fills in once a clean frame arrives).
+                protected_missing = any(q.protected and q.person_id not in live_bound
+                                        for q in self.registry.persons.values())
+                if not protected_missing and t.pending_frames >= 10:
+                    person = self.registry.new_person(pkt.t_ms)
+                    self._bind(pkt, t, person, IdentityStatus.CONFIRMED_NEW, -1.0, events)
+                    live_bound.add(person.person_id)
                 continue
             f = self.feature(pkt.bgr, t.det)
-            best, pid, second = best_match(f, protected_galleries())
+            scores = sorted(
+                ((max(cosine(f, g) for g in q.gallery), q.person_id)
+                 for q in self.registry.persons.values() if q.gallery and q.person_id not in live_bound),
+                reverse=True)
+            best, best_pid = scores[0] if scores else (-1.0, None)
+            second = scores[1][0] if len(scores) > 1 else -1.0
             if best >= cfg.t_match and best - second >= cfg.margin:
-                vote = pid
+                vote = best_pid
             elif best < cfg.t_new:
                 vote = "__new__"
             else:
-                vote = None  # ambiguous frame: stay pending (shielded while a protected person is away)
+                vote = None  # ambiguous frame: stay pending
             if vote is not None and vote == t.vote_pid:
                 t.vote_count += 1
             else:
@@ -324,13 +348,8 @@ class VisionEngine:
             if vote is None or t.vote_count < needed:
                 continue
             if vote == "__new__":
-                if any(q.protected and not q.gallery and q.person_id not in live_bound
-                       for q in self.registry.persons.values()):
-                    # someone asked for blur and left before we could enrol them: we can't rule
-                    # them out, so this face stays pending and shielded.
-                    t.status = IdentityStatus.AMBIGUOUS_MATCH
-                    continue
                 person = self.registry.new_person(pkt.t_ms)
+                person.add_feature(f)
                 self._bind(pkt, t, person, IdentityStatus.CONFIRMED_NEW, best, events)
             else:
                 person = self.registry.get(vote)
@@ -338,13 +357,45 @@ class VisionEngine:
                 self._bind(pkt, t, person, IdentityStatus.MATCHED, best, events)
             live_bound.add(person.person_id)
 
-    def _bind(self, pkt, t: Track, person, status: IdentityStatus, score: float, events: list) -> None:
+    def _continuity(self, t: Track, pkt: FramePacket, live_bound: set):
+        """A face that appears where a known person's track just broke (still coasting, or lost
+        <3 s ago) is that person — no waiting for a clean frontal frame. This is what stops a
+        bystander being shielded as "checking…" when their tracking flickers.
+
+        Safety: re-binding to a PROTECTED person is always allowed (keeps them blurred). Re-binding
+        to an unprotected person is refused if someone protected is missing and this face
+        resembles them, so a returning protected person can't inherit a bystander's identity."""
+        cands = [(o.person_id, o.box) for o in self.tracks if o is not t and o.person_id and o.missed > 0]
+        cands += [(pid, box) for pid, box, _ in self._lost]
+        best, best_d = None, None
+        for pid, box in cands:
+            if pid in live_bound or self.registry.get(pid) is None:
+                continue
+            d = _center_dist(t.box, box)
+            if (_iou(t.box, box) > 0.2 or d < 0.6 * max(box[2], box[3])) and (best_d is None or d < best_d):
+                best, best_d = pid, d
+        if best is None:
+            return None
+        person = self.registry.get(best)
+        if person.protected or t.det is None:
+            return best if person.protected else None
+        missing = [q for q in self.registry.persons.values()
+                   if q.protected and q.gallery and q.person_id not in live_bound]
+        if missing:
+            f = self.feature(pkt.bgr, t.det)
+            if max(max(cosine(f, g) for g in q.gallery) for q in missing) >= self.cfg.t_new:
+                return None  # could be the missing protected person: decide by face, not position
+        return best
+
+    def _bind(self, pkt, t: Track, person, status: IdentityStatus, score: float, events: list,
+              method: str = "face") -> None:
         if status == IdentityStatus.MATCHED:
             # the same person can't also be a lingering lost box elsewhere
             self.tracks = [o for o in self.tracks if o is t or o.person_id != person.person_id]
+            self._lost = [l for l in self._lost if l[0] != person.person_id]
             events.append(self._event(pkt, "PERSON_MATCHED", person.person_id,
                                       details={"track_id": t.track_id, "protected": person.protected,
-                                               "score": round(score, 3)}))
+                                               "score": round(score, 3), "method": method}))
         else:
             events.append(self._event(pkt, "PERSON_NEW", person.person_id,
                                       details={"track_id": t.track_id, "best_protected": round(score, 2)}))
@@ -447,7 +498,7 @@ class VisionEngine:
 
     def _map_faces(self, sig: dict) -> dict:
         """Attach face-landmark samples (mouth, eyes) to live identified tracks."""
-        mouths, eyes = {}, {}
+        mouths, eyes, look = {}, {}, {}
         for t in self.tracks:
             if not t.person_id or t.missed:
                 continue
@@ -458,7 +509,8 @@ class VisionEngine:
                 f = min(cands, key=lambda v: v[1])[0]
                 mouths[t.person_id] = f["mouth"]
                 eyes[t.person_id] = f["eyes_closed"]
-        self.mouth_now, self._eyes_now = mouths, eyes
+                look[t.person_id] = f.get("look_down", 0.0)
+        self.mouth_now, self._eyes_now, self._look_down_now = mouths, eyes, look
         return mouths
 
     def _hand_owner(self, hand: dict, cands: list) -> Optional[Track]:
@@ -477,6 +529,7 @@ class VisionEngine:
 
     @staticmethod
     def _covers_eyes(t: Track, hands: list) -> bool:
+        """Both eyes covered: hand points span both halves of the eye band (live-tested MVP rule)."""
         x, y, w, h = t.box
         y0, y1 = y + 0.10 * h, y + 0.60 * h
         left = right = 0
@@ -505,6 +558,16 @@ class VisionEngine:
                 if owner is not None:
                     peace_owner.add(owner.person_id)
         eyes_now = getattr(self, "_eyes_now", {})
+        look_now = getattr(self, "_look_down_now", {})
+
+        def held(since, last, active):
+            """Hold timer that tolerates brief detector flicker (<350 ms) instead of resetting."""
+            if active:
+                return (since or now), now
+            if since is not None and now - last <= 350:
+                return since, last
+            return None, last
+
         for t in cands:
             pid = t.person_id
             g = self.gestures.setdefault(pid, GestureState())
@@ -513,9 +576,13 @@ class VisionEngine:
             g.peace = pid in peace_owner
             if g.covered:  # hands over the face hide it from the detector: keep the track alive
                 t.last_seen_ms = now
-            g.eyes_since = (g.eyes_since or now) if g.eyes_closed >= cfg.eyes_closed_thr and t.missed == 0 else None
-            g.cover_since = (g.cover_since or now) if g.covered else None
-            g.peace_since = (g.peace_since or now) if g.peace else None
+            # "Eyes closed" must not fire when someone just looks DOWN (e.g. at the laptop
+            # keyboard below the webcam) — MediaPipe's eyeLookDown separates the two.
+            closed = (g.eyes_closed >= cfg.eyes_closed_thr and t.missed == 0
+                      and (look_now.get(pid, 0.0) < cfg.look_down_veto or g.eyes_closed >= 0.9))
+            g.eyes_since, g.eyes_last = held(g.eyes_since, g.eyes_last, closed)
+            g.cover_since, g.cover_last = held(g.cover_since, g.cover_last, g.covered)
+            g.peace_since, g.peace_last = held(g.peace_since, g.peace_last, g.peace)
             if now < g.cooldown_until:
                 continue
             p = self.registry.get(pid)
@@ -544,20 +611,27 @@ class VisionEngine:
         regions = []
         shielded_any = False
         unresolved = pkt.t_ms < self.unresolved_until_ms
-        # A protected person whose track is only coasting (no live detection) counts as
-        # MISSING: if they "teleport" (tracker loses them, new track elsewhere) the new face
-        # must be shielded until identified. Found as a 4/337-frame leak in an e2e replay.
+        bound = {t.person_id for t in self.tracks if t.person_id}
         live_bound = {t.person_id for t in self.tracks if t.person_id and t.missed == 0}
-        protected_unbound = any(p.protected and p.person_id not in live_bound
+        # protected person not in the frame at all -> any unknown face could be them
+        protected_gone = any(p.protected and p.person_id not in bound for p in self.registry.persons.values())
+        # protected person only briefly undetected -> an unknown face far from everyone could be
+        # them "teleporting" (fast move), but an unknown face sitting where a known VISIBLE person
+        # just was is that person's own track re-forming — never blur a bystander for that.
+        protected_flicker = any(p.protected and p.person_id in bound and p.person_id not in live_bound
                                 for p in self.registry.persons.values())
+        visible_boxes = [o.box for o in self.tracks if o.person_id and not self.registry.get(o.person_id).protected]
+
+        def near_visible_person(box) -> bool:
+            return any(_iou(box, vb) > 0.2 or _center_dist(box, vb) < 0.6 * max(vb[2], vb[3]) for vb in visible_boxes)
+
         for t in self.tracks:
             p = self.registry.get(t.person_id)
             if p is not None:
                 # strict policy: anyone without explicit consent is blurred
                 shield = p.protected or (self.strict and p.privacy != Privacy.VISIBLE_BY_CONSENT)
             else:
-                # unknown face while a protected person is unaccounted for: shield until decided
-                shield = protected_unbound or self.strict
+                shield = protected_gone or (protected_flicker and not near_visible_person(t.box)) or self.strict
             if unresolved:
                 shield = True
             t.shielded = shield

@@ -22,11 +22,36 @@ def test_deny_self_matched_protects_target():
     (interp(Intent.DENY), matched(status="AMBIGUOUS", pid=None)),  # two people talking
     (interp(Intent.DENY), matched(status="OFFSCREEN", pid=None)),
     (interp(Intent.DENY), matched(tid="other_turn")),             # stale binding
-    (interp(Intent.UNCLEAR), matched()),
 ])
 def test_unsafe_cases_never_target_a_person(parsed, match):
     r = resolve_request(turn(), parsed, match, S, "e1")
     assert r.action == RequestAction.UNRESOLVED and r.target_person_id is None
+
+def test_unclear_chatter_is_a_no_op_not_a_global_shield():
+    assert resolve_request(turn(), interp(Intent.UNCLEAR), matched(), S, "e1") is None
+
+
+@pytest.mark.parametrize("text", ["go ahead and film me", "yeah you can record.", "you can record me now",
+                                  "Yeah, record me", "bet, film me", "I'm good with it being on camera",
+                                  "im down being filmed", "it's all good to film me", "un blur me", "You're good to film me"])
+def test_slang_consent_fast_path(text):
+    r = local_rules.interpret(turn(text))
+    assert r is not None and r.intent == Intent.ALLOW and r.speaker_ref == SpeakerRef.SELF, text
+
+
+@pytest.mark.parametrize("text", ["stop recording me", "get me out of the video", "nah don't film me",
+                                  "I'm not tryna be on camera", "can you blur me?", "hide my identity", "no filming me"])
+def test_slang_refusal_fast_path(text):
+    r = local_rules.interpret(turn(text))
+    assert r is not None and r.intent == Intent.DENY, text
+
+
+@pytest.mark.parametrize("text", ["show me the menu", "you can record the lecture", "can you record me?",
+                                  "maybe you can film me", "if you want you can film me", "I was okay being filmed",
+                                  "you can't film me"])
+def test_not_consent(text):
+    r = local_rules.interpret(turn(text))
+    assert r is None or r.intent != Intent.ALLOW, text
 
 def test_own_bound_allow_unprotects_only_the_speaker():
     r = resolve_request(turn(), interp(Intent.ALLOW), matched(), S, "e1")
