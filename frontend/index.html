@@ -30,7 +30,7 @@
   .field i:nth-child(3) { display:none; }
   .ribbon { position:absolute; inset:0; transition:opacity 1.8s var(--ease); transform-origin:50% 45%; animation:sway 26s ease-in-out infinite alternate; }
   .ribbon svg { width:100%; height:100%; opacity:0; }
-  .field.reveal .ribbon svg { animation:fade 3.6s var(--ease) .1s forwards; }
+  .field.reveal .ribbon svg { animation:fade 3.2s var(--ease) forwards; }
   .field.calm .ribbon { opacity:.5; }
   .field.calm i, .field.calm .ribbon { animation-play-state:paused; }
   @keyframes drift1 { to { transform:translate(8vw,5vw) scale(1.1); } }
@@ -51,7 +51,7 @@
           -webkit-mask-size:240% 100%; mask-size:240% 100%; -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat;
           -webkit-mask-position:100% 0; mask-position:100% 0; }
   .splash.play .wipe { animation:wipe var(--dur,1.6s) cubic-bezier(.37,0,.63,1) var(--at,0s) forwards; }
-  .splash.play .mark .wipe { --dur:2.6s; --at:.6s; animation-name:wipe,settle; animation-timing-function:cubic-bezier(.37,0,.63,1),cubic-bezier(.22,.61,.36,1); }
+  .splash.play .mark .wipe { --dur:2.6s; --at:0s; animation-name:wipe,settle; animation-timing-function:cubic-bezier(.37,0,.63,1),cubic-bezier(.22,.61,.36,1); }
   .splash.play .tag.wipe { --dur:1.6s; --at:2.3s; }
   .splash.play .motto .wipe { --dur:1.6s; --at:3.3s; }
   .splash.play .enter.wipe { --dur:1.3s; --at:4.2s; }
@@ -73,7 +73,7 @@
            border-bottom:1px solid rgba(255,255,255,.22); }
   .brand { display:flex; align-items:center; gap:14px; }
   .brand .hmark { width:152px; height:auto; color:#fff; opacity:0; }
-  .app.in .brand .hmark.show { opacity:1; }
+  .app.in .brand .hmark.show { opacity:1; cursor:pointer; }
   .brand .hmark svg { display:block; width:100%; height:auto; }
   .brand small { font-size:12px; font-weight:600; margin-top:6px; opacity:.92; white-space:nowrap; }
   nav { display:flex; gap:46px; height:100%; }
@@ -265,7 +265,12 @@
 <!-- ============ logo reveal ============ -->
 <div class="splash" id="splash" tabindex="0" role="button" aria-label="Enter Consent">
   <div class="stack">
-    <div class="mark" id="mark"><div class="wipe" id="markInner"></div></div>
+    <div class="mark" id="mark"><div class="wipe" id="markInner"><svg xmlns="http://www.w3.org/2000/svg" viewBox="9.9 9.8 402.6 88.5" fill="currentColor" fill-rule="evenodd" role="img" aria-label="Consent">
+  <path class="g g0" d="M11.34,48.12 L10.92,51.88 L10.92,56.62 L11.20,60.62 L12.08,65.00 L13.32,69.25 L14.86,72.88 L19.07,80.00 L21.64,83.22 L24.75,86.30 L31.62,91.44 L35.12,93.28 L40.38,95.28 L46.75,96.81 L52.38,97.24 L58.12,96.97 L64.75,95.72 L69.38,94.25 L73.62,92.46 L76.75,90.72 L81.50,87.30 L86.01,83.12 L87.46,82.50 L88.75,83.13 L92.27,87.62 L96.00,91.24 L99.25,93.31 L104.62,95.67 L107.88,96.67 L112.38,97.21 L117.00,97.00 L120.88,96.25 L125.00,94.83 L129.38,92.83 L132.25,90.76 L135.96,87.12 L137.74,85.00 L139.40,82.38 L143.75,72.13 L144.39,71.04 L145.04,70.59 L145.68,71.23 L145.95,73.12 L145.94,91.12 L146.43,94.32 L147.56,95.54 L149.38,96.15 L155.00,96.25 L157.49,95.86 L159.32,94.54 L160.07,92.37 L160.14,64.00 L160.69,59.62 L162.01,56.25 L164.04,53.74 L167.00,51.68 L170.25,50.83 L174.12,51.13 L177.50,52.58 L180.24,55.14 L182.13,58.62 L182.84,62.25 L182.86,91.12 L183.23,92.75 L183.97,94.08 L185.27,95.32 L186.88,96.18 L190.25,96.68 L193.75,96.16 L197.75,94.63 L201.65,91.86 L204.38,88.62 L206.50,85.50 L210.02,78.75 L213.95,70.27 L214.63,69.32 L215.44,68.83 L217.00,69.03 L223.12,71.82 L234.25,74.33 L236.52,75.77 L237.70,77.75 L237.63,79.50 L236.54,81.47 L234.74,83.09 L232.75,83.93 L229.88,84.20 L226.38,83.84 L219.38,81.38 L218.02,81.67 L216.67,82.79 L213.18,88.00 L212.71,89.37 L212.83,90.61 L213.64,91.87 L215.13,93.04 L218.25,94.69 L221.38,95.95 L225.75,97.02 L231.50,97.05 L236.50,96.23 L241.00,94.57 L244.97,91.91 L247.37,89.25 L249.61,85.25 L250.90,80.50 L250.98,76.38 L249.65,71.62 L247.84,68.13 L245.12,65.39 L241.75,63.00 L236.88,60.96 L233.62,60.11 L224.25,58.48 L222.72,57.49 L221.62,55.99 L221.31,54.25 L221.95,52.52 L223.52,50.92 L225.62,49.81 L228.75,49.32 L232.00,49.67 L235.12,50.70 L239.88,53.07 L241.75,53.35 L242.97,52.88 L244.35,51.71 L246.60,48.88 L247.68,47.00 L247.88,45.38 L247.18,43.88 L245.25,41.94 L242.50,40.08 L239.62,38.64 L235.75,37.27 L232.50,36.56 L229.50,36.38 L224.88,36.70 L219.00,38.40 L215.00,40.80 L211.04,44.41 L209.77,46.25 L208.30,49.12 L205.53,56.75 L199.68,70.38 L198.11,73.33 L197.19,74.27 L196.69,73.92 L196.50,72.62 L196.31,58.12 L195.56,54.38 L194.30,50.62 L192.33,46.75 L189.72,43.53 L186.62,41.06 L182.12,38.54 L179.62,37.63 L176.12,36.80 L170.50,36.41 L163.25,37.72 L158.75,39.59 L154.13,42.84 L150.74,46.50 L148.67,50.00 L145.14,58.99 L144.42,60.13 L143.86,60.42 L143.21,59.77 L140.98,54.00 L138.27,49.12 L135.42,45.64 L132.37,42.93 L128.50,40.31 L122.38,37.66 L117.00,36.54 L112.50,36.40 L106.75,37.35 L102.25,38.79 L98.00,40.97 L93.79,44.33 L90.75,47.75 L87.96,51.88 L86.59,54.50 L83.25,62.38 L80.06,67.50 L75.61,72.56 L70.75,76.51 L65.00,79.54 L60.62,80.70 L56.62,81.36 L53.62,81.57 L50.50,81.33 L43.88,79.56 L41.12,78.28 L37.38,75.76 L35.28,74.05 L33.37,72.00 L30.40,67.62 L27.73,60.62 L27.15,57.62 L26.88,54.38 L26.98,51.25 L27.51,47.88 L28.29,45.12 L29.81,41.75 L32.65,37.25 L35.30,34.11 L39.25,31.04 L43.12,29.08 L47.50,27.71 L50.88,27.22 L53.88,27.15 L57.50,27.49 L61.00,28.18 L65.50,29.94 L72.12,34.45 L74.50,35.15 L76.50,34.61 L78.73,33.04 L82.06,29.50 L83.27,27.12 L83.14,24.88 L81.77,22.38 L79.12,19.73 L75.62,17.19 L72.00,15.10 L67.50,13.19 L63.75,12.08 L58.38,11.06 L51.00,10.88 L45.25,11.78 L40.88,12.81 L33.38,16.01 L26.88,20.55 L24.12,23.07 L20.31,27.25 L15.68,34.38 L13.21,40.00Z M112.75,50.80 L116.12,50.85 L118.62,51.41 L121.25,52.73 L124.11,54.90 L126.42,57.38 L128.12,60.00 L129.08,62.62 L129.58,65.88 L129.42,68.88 L128.65,71.88 L127.15,75.12 L125.38,77.61 L123.25,79.56 L120.62,81.18 L117.12,82.42 L114.38,82.86 L111.50,82.70 L108.50,81.77 L106.00,80.48 L103.53,78.55 L101.48,76.25 L99.92,73.62 L98.97,71.00 L98.54,68.12 L98.66,64.62 L99.23,61.62 L100.24,59.25 L101.94,56.75 L104.38,54.30 L107.12,52.42 L109.88,51.26Z"/>
+  <path class="g g1" d="M280.12,36.67 L274.12,38.23 L269.00,41.11 L264.07,45.38 L260.13,50.62 L257.96,55.12 L256.59,60.00 L256.03,68.75 L256.48,73.88 L258.24,79.50 L260.82,84.38 L264.99,89.48 L268.25,92.18 L274.25,95.34 L278.50,96.59 L284.62,97.12 L291.75,96.56 L295.12,95.68 L298.25,94.47 L302.50,92.32 L305.30,90.35 L306.57,88.74 L307.01,87.25 L306.66,85.75 L305.38,83.92 L301.81,80.15 L300.74,79.44 L299.75,79.20 L298.00,79.60 L292.38,82.32 L288.75,83.43 L284.38,83.72 L280.88,83.15 L277.25,81.38 L274.14,78.93 L271.47,75.13 L271.07,73.89 L271.16,72.87 L271.88,72.09 L273.13,71.81 L282.75,72.46 L290.00,72.04 L293.62,71.26 L298.38,69.13 L302.87,65.88 L304.71,63.99 L305.92,62.25 L307.43,59.38 L308.15,57.12 L308.47,54.62 L308.25,52.12 L306.99,48.38 L305.03,45.05 L301.62,41.96 L297.75,39.41 L294.00,37.79 L289.50,36.69 L284.75,36.38Z M294.50,55.25 L294.25,56.85 L292.84,58.38 L290.38,59.45 L287.00,60.24 L282.88,60.70 L279.50,60.62 L272.57,59.96 L271.83,59.61 L271.52,59.01 L271.67,57.87 L272.51,56.12 L275.27,52.74 L278.50,50.65 L282.38,49.44 L286.12,49.39 L289.75,50.48 L293.01,52.74 L294.01,54.02Z"/>
+  <path class="g g2" d="M328.25,40.92 L324.18,44.42 L321.52,47.88 L319.33,52.25 L317.92,57.50 L317.55,60.12 L317.39,65.25 L317.38,91.38 L317.52,93.49 L318.08,94.76 L319.05,95.62 L320.50,96.13 L326.75,96.21 L329.36,95.67 L331.06,94.09 L331.67,91.62 L331.67,64.25 L331.83,61.00 L332.22,59.00 L333.95,55.50 L336.75,52.70 L339.88,51.24 L343.88,50.81 L347.00,51.35 L349.74,53.05 L352.62,56.13 L354.14,59.38 L354.62,63.62 L354.52,91.12 L355.05,94.22 L356.41,95.65 L358.38,96.22 L364.62,96.19 L367.05,95.38 L368.23,93.97 L368.61,92.00 L368.59,59.88 L368.14,57.00 L366.84,52.00 L365.65,49.12 L364.31,46.88 L360.86,43.01 L356.75,39.83 L353.00,38.02 L347.75,36.76 L341.25,36.51 L337.12,36.99 L332.62,38.48Z"/>
+  <path class="g g3" d="M382.63,17.37 L381.52,17.91 L380.53,18.80 L379.45,21.00 L379.23,33.87 L378.84,35.76 L378.22,36.43 L377.35,36.81 L371.00,37.16 L369.63,37.61 L368.43,38.42 L367.29,39.76 L366.60,41.50 L366.40,44.12 L366.70,46.25 L367.82,48.20 L369.63,49.63 L371.50,50.07 L377.11,50.26 L378.22,50.73 L378.95,51.68 L379.23,53.38 L379.51,75.12 L379.82,78.38 L380.57,81.38 L382.13,85.50 L383.48,87.88 L385.49,90.61 L387.15,92.30 L389.13,93.65 L392.38,95.36 L395.00,96.26 L398.62,96.89 L402.00,97.00 L405.12,96.80 L408.00,96.17 L410.24,94.87 L411.30,92.87 L411.34,86.00 L410.66,83.83 L409.80,83.02 L408.62,82.58 L403.00,82.95 L399.75,82.27 L398.01,81.26 L396.49,79.93 L395.43,78.49 L394.67,76.75 L394.21,74.75 L394.02,71.88 L394.05,54.00 L394.47,51.47 L394.97,50.83 L395.79,50.37 L397.50,50.14 L407.12,50.06 L408.48,49.77 L409.60,49.12 L410.40,48.09 L410.80,46.62 L410.93,41.25 L410.70,39.63 L409.72,38.07 L408.00,37.18 L397.00,36.85 L395.07,36.26 L394.44,35.43 L394.12,34.00 L394.09,22.00 L393.84,20.38 L393.28,19.17 L392.08,18.00 L390.37,17.37 L384.62,17.14Z"/>
+</svg></div></div>
     <div class="tag wipe fadeout">Powered by Meta AI</div>
     <div class="enter wipe fadeout"><span>Touch to enter</span></div>
   </div>
@@ -386,16 +391,14 @@ const pname = (pid) => pid ? "Person " + String(parseInt(pid.replace("person_", 
 const clock = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
 /* ---------------- reveal ---------------- */
-async function loadMark() {
-  try { wordmark = await (await fetch("/assets/consent-wordmark.svg")).text(); } catch (e) { wordmark = ""; }
-  $("markInner").innerHTML = wordmark || '<div style="font:600 72px var(--font);text-align:center">Consent</div>';
+function loadMark() {
+  // the wordmark is inlined in the page so the reveal can start on the very first frame
+  wordmark = $("markInner").innerHTML;
   $("hmark").innerHTML = wordmark;
 }
 function startReveal() {
-  // wait for the brand font so no line changes shape mid-reveal (cap the wait so an offline demo still plays)
-  const fonts = document.fonts ? document.fonts.ready : Promise.resolve();
-  Promise.race([fonts, new Promise(r => setTimeout(r, 1200))]).then(() =>
-    requestAnimationFrame(() => { $("field").classList.add("reveal"); $("splash").classList.add("play"); }));
+  // the wordmark is vector art, so it starts at once; the text lines start >= 2.3 s later, by which time Figtree has loaded
+  requestAnimationFrame(() => { $("field").classList.add("reveal"); $("splash").classList.add("play"); });
 }
 let entered = false;
 function enter() {
@@ -420,6 +423,8 @@ function enter() {
   setTimeout(land, 1500);  // a throttled/hidden tab must never leave the header logo invisible
 }
 $("splash").addEventListener("click", enter);
+$("hmark").title = "Replay intro";
+$("hmark").addEventListener("click", () => location.reload());  // replays the reveal; the session keeps running server-side
 $("splash").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " " || e.key === "Escape") { e.preventDefault(); enter(); } });
 
 /* ---------------- controls ---------------- */
@@ -666,7 +671,7 @@ function render() {
 
 /* ---------------- boot ---------------- */
 async function boot() {
-  await loadMark();
+  loadMark();
   startReveal();
   $("splash").focus({ preventScroll: true });
   health = await (await fetch("/api/health")).json().catch(() => ({}));
