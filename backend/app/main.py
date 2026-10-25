@@ -35,7 +35,16 @@ async def require_app_header(request, call_next):
         from fastapi.responses import JSONResponse
         return JSONResponse({"detail": "missing X-ConsentLens header"}, status_code=403)
     return await call_next(request)
-_state: dict = {"session": None, "models": None, "voice": None}
+_state: dict = {"session": None, "models": None, "voice": None, "storage": None}
+
+
+def _storage():
+    """R2 when configured (videos not kept locally), else local recordings/ folder."""
+    from backend.app.media.storage import R2Storage, r2_config
+    if _state["storage"] is None:
+        cfg = r2_config()
+        _state["storage"] = R2Storage(cfg) if cfg else False
+    return _state["storage"] or None
 _lock = threading.Lock()
 REC_ID = re.compile(r"^rec_[0-9a-f]{12}$")
 
@@ -51,6 +60,11 @@ def _session() -> Session:
     if s is None:
         raise HTTPException(409, "no active session")
     return s
+
+
+def _missing_r2() -> list:
+    from backend.app.media.storage import missing_r2_settings
+    return missing_r2_settings()
 
 
 def _pkg(name: str) -> Optional[str]:
@@ -73,6 +87,7 @@ def health():
         "diagnostic_original_enabled": settings.diagnostic_original,
         "dev_controls_enabled": settings.dev_controls,
         "meta_key_configured": bool(settings.meta_key),
+        "recording_storage": "r2" if _storage() else "local (R2 not configured: missing " + ", ".join(_missing_r2()) + ")",
         "gemini_key_configured": bool(settings.gemini_key),
         "voice": voice.status() if voice else {"state": "OFF"},
     }
@@ -94,7 +109,7 @@ def session_start():
             signals = Signals(settings.models_dir)  # fresh per session (VIDEO-mode timestamps)
         except Exception:
             signals = None  # no gestures; speaker binding falls back to single_candidate (shown in state)
-        sess = Session(settings, src, _models(), label, signals=signals)
+        sess = Session(settings, src, _models(), label, signals=signals, storage=_storage())
         try:
             sess.start()
         except Exception as exc:
@@ -170,12 +185,18 @@ async def events(ws: WebSocket):
 
 @app.get("/api/recordings/{recording_id}/protected")
 def recording_protected(recording_id: str):
+    """Protected video only. R2: short-lived presigned redirect. Raw is never linked."""
+    from fastapi.responses import RedirectResponse
     if not REC_ID.match(recording_id):
         raise HTTPException(404)
     s = _state["session"]
-    finished = [r["recording_id"] for r in (s.finished_recordings if s else [])]
+    info = next((r for r in (s.finished_recordings if s else []) if r["recording_id"] == recording_id), None)
+    if info and info.get("storage") == "r2":
+        if info.get("upload") != "uploaded":
+            raise HTTPException(409, f"upload {info.get('upload')}")
+        return RedirectResponse(_storage().presign_protected(info["protected_key"], ttl_s=300), status_code=307)
     path = Path(settings.recordings_dir) / f"{recording_id}_protected.mp4"
-    if recording_id not in finished and s is not None:
+    if info is None and s is not None:
         raise HTTPException(409, "recording not finalized")
     if not path.is_file():
         raise HTTPException(404)

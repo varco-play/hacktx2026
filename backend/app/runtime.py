@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import secrets
+import tempfile
 import threading
 import time
 from collections import deque
@@ -12,13 +13,14 @@ import cv2
 
 from backend.app.config import Settings
 from backend.app.media.recorders import PairedRecorder
+from backend.app.media.storage import PROTECTED_PREFIX, RESTRICTED_PREFIX
 from backend.app.vision.engine import VisionEngine
 from backend.app.vision.renderer import full_shield
 from shared.contracts import FramePacket, OutputState
 
 
 class Session:
-    def __init__(self, settings: Settings, source, face_models, source_label: str, signals=None):
+    def __init__(self, settings: Settings, source, face_models, source_label: str, signals=None, storage=None):
         self.settings = settings
         self.session_id = "s_" + secrets.token_hex(4)
         self.source = source
@@ -26,6 +28,7 @@ class Session:
         self.engine = VisionEngine(self.session_id, face_models.detect, face_models.feature, signals=signals)
         self.recorder: Optional[PairedRecorder] = None
         self.finished_recordings: list[dict] = []
+        self.storage = storage  # R2Storage or None (local files)
         self._t0 = time.monotonic()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -61,18 +64,50 @@ class Session:
             if self.recorder is not None:
                 return self.recorder.info()
             s = self.settings
-            self.recorder = PairedRecorder(Path(s.recordings_dir), s.width, s.height, s.fps,
-                                           s.diagnostic_original, self.now_ms())
+            if self.storage is not None:
+                # R2 mode: encode into a temp folder; deleted after a confirmed upload.
+                out_dir = Path(tempfile.mkdtemp(prefix="consentlens_rec_"))
+                raw = s.diagnostic_original and s.raw_upload  # raw only if explicitly allowed
+            else:
+                out_dir, raw = Path(s.recordings_dir), s.diagnostic_original
+            self.recorder = PairedRecorder(out_dir, s.width, s.height, s.fps, raw, self.now_ms())
             return self.recorder.info()
 
     def stop_recording(self) -> Optional[dict]:
         with self._lock:
             if self.recorder is None:
                 return None
-            info = self.recorder.close()
+            rec = self.recorder
+            info = rec.close()
+            info["storage"] = "r2" if self.storage is not None else "local"
             self.finished_recordings.append(info)
             self.recorder = None
-            return info
+        if self.storage is not None:
+            info["upload"] = "uploading"
+            threading.Thread(target=self._upload, args=(rec, info), name="r2-upload", daemon=True).start()
+        return info
+
+    def _upload(self, rec: PairedRecorder, info: dict) -> None:
+        """Upload finished files to R2, then delete the local temp copies.
+        On failure the local file is KEPT (never silently lose the protected video)."""
+        rid = rec.recording_id
+        jobs = [(rec.protected.path, f"{PROTECTED_PREFIX}{self.session_id}/{rid}.mp4", "protected_key")]
+        if rec.original is not None:
+            jobs.append((rec.original.path, f"{RESTRICTED_PREFIX}{self.session_id}/{rid}_original.mp4",
+                         "restricted_key"))
+        try:
+            for path, key, field in jobs:
+                self.storage.upload(path, key)
+                info[field] = key
+                path.unlink(missing_ok=True)
+            try:
+                rec.protected.path.parent.rmdir()
+            except OSError:
+                pass
+            info["upload"] = "uploaded"
+        except Exception as exc:
+            info["upload"] = f"FAILED ({type(exc).__name__}) — kept locally until retried"
+            info["local_path"] = str(rec.protected.path)
 
     def _emit(self, events: list) -> None:
         for ev in events:

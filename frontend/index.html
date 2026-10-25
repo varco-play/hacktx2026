@@ -158,7 +158,7 @@ function render() {
     `<div>${(e.t_ms / 1000).toFixed(1)}s ${esc(e.type)} ${esc(e.person_id || "")} ${e.source ? "[" + esc(e.source) + (e.details && e.details.gesture ? ": " + esc(e.details.gesture) : "") + "]" : ""}</div>`).join("") || "—";
   const recs = st.finished_recordings || [];
   $("recs").innerHTML = recs.length ? recs.slice().reverse().map(r =>
-    `<div><a href="/api/recordings/${esc(r.recording_id)}/protected" target="_blank">${esc(r.recording_id)} protected.mp4</a> · ${r.frames} frames${r.error ? " · ERROR " + esc(r.error) : ""}${r.has_diagnostic_original ? " · diagnostic original saved locally (not served)" : ""}</div>`).join("") : "none yet";
+    `<div><a href="/api/recordings/${esc(r.recording_id)}/protected" target="_blank">${esc(r.recording_id)} protected.mp4</a> · ${r.frames} frames${r.error ? " · ERROR " + esc(r.error) : ""} · ${r.storage === "r2" ? "Cloudflare R2: " + esc(r.upload || "?") : "local file"}${r.has_diagnostic_original ? (r.storage === "r2" ? " · raw in R2 restricted/ (never linked)" : " · raw original saved locally (not served)") : ""}</div>`).join("") : "none yet";
 }
 
 async function boot() {
