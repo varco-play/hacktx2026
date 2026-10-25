@@ -311,3 +311,35 @@ def test_peace_hand_resting_on_a_face_is_ignored():
     s.sig = {"faces": [], "hands": [hand(150, 150, peace=True)]}   # palm inside A's face box
     res, n = run(e, s, 30, n)
     assert e.registry.get(a).protected
+
+
+def test_stalled_landmarker_never_blocks_the_frame_loop_and_restarts():
+    import threading, time
+    from backend.app.vision import landmarks as L
+    gate = threading.Event()
+    calls = {"n": 0}
+
+    class FakeLM:
+        last_ts = -1
+
+    orig_detect, orig_lm = L.Signals._detect, L._Landmarkers
+    def detect(lm, bgr, t, do_hands):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            gate.wait(10)  # simulate MediaPipe hanging on the 2nd frame
+        return [], []
+    L.Signals._detect = staticmethod(detect)
+    L._Landmarkers = lambda *a: FakeLM()
+    try:
+        sg = L.Signals("models", budget_ms=50, restart_ms=300)
+        img = packet(1).bgr
+        assert "stalled" not in sg(img, 0)
+        t0 = time.monotonic(); r = sg(img, 33)
+        assert r.get("stalled") and time.monotonic() - t0 < 0.3     # returned within budget
+        assert sg(img, 66).get("stalled")                             # still stuck: skip, don't queue
+        time.sleep(0.35)
+        assert sg(img, 99).get("stalled") and sg.restarts == 1        # abandoned + fresh worker
+        assert "stalled" not in sg(img, 132)                          # new worker serves frames
+    finally:
+        gate.set()
+        L.Signals._detect, L._Landmarkers = orig_detect, orig_lm

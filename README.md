@@ -1,6 +1,6 @@
 # ConsentLens — HackTX 2026
 
-> **Status (2026-10-24 19:00 CDT):** working MVP draft. Webcam → local face detection → session re-ID → latched privacy → **blurred pixels in saved video**, protected-only live preview, Meta Muse voice path. See `HANDOFF.md` for what is verified vs not.
+> **Status (2026-10-25):** working MVP — voice, eyes-closed and hands-over-eyes blur, peace-sign / "unblur me" consent, session re-ID. Webcam → local face detection → session re-ID → latched privacy → **blurred pixels in saved video**, protected-only live preview, Meta Muse voice path. See `HANDOFF.md` for what is verified vs not.
 
 ## Run it (Apple Silicon Mac)
 
@@ -16,6 +16,9 @@ cp .env.example .env                    # then add META_MODEL_API_KEY locally
 Open http://127.0.0.1:8000 → **Start session** → **Start voice** → **Start recording**. macOS must allow Camera + Microphone for the app running Python.
 
 - Tests: `.venv/bin/python -m pytest`
+- How it works, Meta glasses path, and known weaknesses: `docs/15_SYSTEM_OVERVIEW_AND_CRITIQUE.md`
+- Scripted API calls: every POST needs header `X-ConsentLens: 1` (blocks other websites from driving the camera)
+- Dev launcher (auto-reload + dev-only controls): `scripts/run.sh --dev`
 - Replay a file instead of the camera (shown as **TEST INPUT**): `TEST_VIDEO=path.mp4 .venv/bin/python -m uvicorn backend.app.main:app`
 - Dev-only manual protect button: `ENABLE_DEV_CONTROLS=true` (labeled `MANUAL_TEST`; keep off for judges)
 - Developer diagnostic original file (saved locally, never served): `ENABLE_DIAGNOSTIC_ORIGINAL=true`

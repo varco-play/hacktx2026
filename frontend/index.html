@@ -83,7 +83,7 @@ const $ = (id) => document.getElementById(id);
 let health = {}, st = {}, previewOn = false;
 
 async function api(path, method = "POST") {
-  const r = await fetch(path, { method });
+  const r = await fetch(path, { method, headers: { "X-ConsentLens": "1" } });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) alert(`${path}: ${j.detail || r.status}`);
   return j;

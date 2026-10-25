@@ -47,3 +47,19 @@ Input: `scripts/make_test_video.py` built from OpenCV sample images (two faces; 
 | Before fixes | serial handling, strict schema | 1.9 s endpointing + 3.5–9 s, later turns blocked |
 
 **Not yet verified live:** peace sign by a real hand (only geometry unit tests + no-false-positive replay), eyes-closed 2 s on live camera, two-person lip-motion attribution with real speech.
+
+## 2026-10-25 ~00:30 — Owner live recordings (27 min + 5 min), replayed
+
+| Event (time) | What the frames show | Engine |
+| --- | --- | --- |
+| 13.8 s | person covers eyes with hand | PRIVACY_ACTIVATED (hands_over_eyes) ✔ |
+| 34.0 s | same person holds a ✌ peace sign beside face | PRIVACY_RELEASED (peace_sign) ✔ |
+| 813 s | a different person walks in | PERSON_NEW person_002 ✔ (2 IDs total for 27 min) |
+| 2nd recording 16.8 s | front person covers eyes, second person behind | front person blurred only ✔ |
+| 2nd recording 193 s | blurred person holds ✌ | PRIVACY_RELEASED ✔ (2 IDs total for 5 min) |
+
+Final replay: 0 landmark timeouts / 0 restarts; offline throughput ~55–67 fps.
+
+Voice (live Muse, final run): "please blur me" ⚡ partial path, issued ~0.5 s after speech end; "unblur me" ~0.8 s; Muse Spark phrases decided 1.3–1.5 s after the final transcript.
+
+Robustness: one replay hung inside MediaPipe (main thread blocked in a lock; not reproducible on the same file alone). Landmarks now run on a watchdog thread (120 ms budget, restart after 2 s); unit test simulates the hang.

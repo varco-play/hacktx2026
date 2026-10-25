@@ -43,35 +43,89 @@ def is_peace(pts: np.ndarray) -> bool:
     return spread >= 10.0
 
 
-class Signals:
-    def __init__(self, models_dir: str | Path, max_faces: int = 4, max_hands: int = 4, hands_every: int = 2):
+class _Landmarkers:
+    """MediaPipe face + hand landmarkers owned by ONE worker thread."""
+
+    def __init__(self, models_dir: Path, max_faces: int, max_hands: int):
         import mediapipe as mp
         from mediapipe.tasks import python as mpt
         from mediapipe.tasks.python import vision
         self._mp = mp
-        d = Path(models_dir)
         self.face = vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(
-            base_options=mpt.BaseOptions(model_asset_path=str(d / "face_landmarker.task")),
+            base_options=mpt.BaseOptions(model_asset_path=str(models_dir / "face_landmarker.task")),
             running_mode=vision.RunningMode.VIDEO, num_faces=max_faces, output_face_blendshapes=True,
             min_face_detection_confidence=0.4, min_tracking_confidence=0.4))
         self.hand = None
-        if (d / "hand_landmarker.task").is_file():
+        if (models_dir / "hand_landmarker.task").is_file():
             self.hand = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
-                base_options=mpt.BaseOptions(model_asset_path=str(d / "hand_landmarker.task")),
+                base_options=mpt.BaseOptions(model_asset_path=str(models_dir / "hand_landmarker.task")),
                 running_mode=vision.RunningMode.VIDEO, num_hands=max_hands,
                 min_hand_detection_confidence=0.5, min_tracking_confidence=0.5))
-        self.hands_every = hands_every
+        self.last_ts = -1
+
+
+class Signals:
+    """Landmark evidence with a time budget so MediaPipe can never freeze the vision loop.
+
+    Detection runs on a dedicated worker thread. If a frame exceeds `budget_ms` the
+    caller gets no evidence for that frame (gestures/lips pause; blur decisions are
+    unaffected). If the worker stays stuck for `restart_ms`, it is abandoned and a
+    fresh worker with new landmarkers takes over. (Observed once: an intermittent
+    MediaPipe stall under heavy CPU load, 2026-10-25.)
+    """
+
+    def __init__(self, models_dir: str | Path, max_faces: int = 4, max_hands: int = 4, hands_every: int = 2,
+                 budget_ms: int = 120, restart_ms: int = 2000):
+        from concurrent.futures import ThreadPoolExecutor
+        self._Executor = ThreadPoolExecutor
+        self.models_dir, self.max_faces, self.max_hands = Path(models_dir), max_faces, max_hands
+        self.hands_every, self.budget_ms, self.restart_ms = hands_every, budget_ms, restart_ms
         self._n = 0
-        self._last_ts = -1
         self._last_hands: list = []
+        self.timeouts = 0
+        self.restarts = 0
+        self._start_worker()
+        self._lm = self._pool.submit(_Landmarkers, self.models_dir, max_faces, max_hands).result()
+        self._pending = None
+        self._pending_since = 0.0
+
+    def _start_worker(self) -> None:
+        self._pool = self._Executor(max_workers=1, thread_name_prefix="landmarks")
 
     def __call__(self, bgr: np.ndarray, t_ms: int) -> dict:
-        ts = max(int(t_ms), self._last_ts + 1)  # VIDEO mode needs strictly increasing timestamps
-        self._last_ts = ts
+        import time as _t
+        from concurrent.futures import TimeoutError as _Timeout
+        now = _t.monotonic()
+        if self._pending is not None and not self._pending.done():
+            if (now - self._pending_since) * 1000 > self.restart_ms:
+                self._pool.shutdown(wait=False, cancel_futures=True)  # abandon the stuck worker
+                self._start_worker()
+                self._lm = self._pool.submit(_Landmarkers, self.models_dir, self.max_faces, self.max_hands).result()
+                self._pending = None
+                self.restarts += 1
+            return {"faces": [], "hands": self._last_hands, "stalled": True}
+        self._n += 1
+        do_hands = self._n % self.hands_every == 0
+        fut = self._pool.submit(self._detect, self._lm, bgr, int(t_ms), do_hands)
+        try:
+            faces, hands = fut.result(timeout=self.budget_ms / 1000)
+        except _Timeout:
+            self.timeouts += 1
+            self._pending, self._pending_since = fut, now
+            return {"faces": [], "hands": self._last_hands, "stalled": True}
+        self._pending = None
+        if hands is not None:
+            self._last_hands = hands
+        return {"faces": faces, "hands": self._last_hands}
+
+    @staticmethod
+    def _detect(lm: _Landmarkers, bgr: np.ndarray, t_ms: int, do_hands: bool):
+        ts = max(t_ms, lm.last_ts + 1)  # VIDEO mode needs strictly increasing timestamps
+        lm.last_ts = ts
         h, w = bgr.shape[:2]
-        img = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+        img = lm._mp.Image(image_format=lm._mp.ImageFormat.SRGB, data=cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
         faces = []
-        fr = self.face.detect_for_video(img, ts)
+        fr = lm.face.detect_for_video(img, ts)
         for i, lms in enumerate(fr.face_landmarks):
             pt = lambda k: np.array([lms[k].x * w, lms[k].y * h])
             eye = np.linalg.norm(pt(EYE_L) - pt(EYE_R))
@@ -82,12 +136,11 @@ class Signals:
             faces.append({"c": (float(c[0]), float(c[1])),
                           "mouth": float(np.linalg.norm(pt(UPPER_INNER) - pt(LOWER_INNER)) / eye),
                           "eyes_closed": float(min(bs.get("eyeBlinkLeft", 0.0), bs.get("eyeBlinkRight", 0.0)))})
-        self._n += 1
-        if self.hand is not None and self._n % self.hands_every == 0:
+        hands = None
+        if lm.hand is not None and do_hands:
             hands = []
-            for lms in self.hand.detect_for_video(img, ts).hand_landmarks:
-                pts = np.array([[p.x * w, p.y * h] for p in lms], dtype=np.float32)
+            for hl in lm.hand.detect_for_video(img, ts).hand_landmarks:
+                pts = np.array([[p.x * w, p.y * h] for p in hl], dtype=np.float32)
                 c = pts[list(PALM)].mean(axis=0)
                 hands.append({"c": (float(c[0]), float(c[1])), "pts": pts, "peace": is_peace(pts)})
-            self._last_hands = hands
-        return {"faces": faces, "hands": self._last_hands}
+        return faces, hands

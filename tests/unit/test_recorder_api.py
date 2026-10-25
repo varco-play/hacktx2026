@@ -35,3 +35,12 @@ def test_health_exposes_no_secrets_and_no_original_route(monkeypatch):
     assert not any("original" in p for p in paths)
     assert c.post("/api/dev/protect/person_001").status_code in (404, 409) or not main.settings.dev_controls
     assert c.get("/api/recordings/../../etc/passwd/protected").status_code == 404
+
+
+def test_state_changing_calls_need_app_header():
+    from fastapi.testclient import TestClient
+    from backend.app import main
+    c = TestClient(main.app)
+    assert c.post("/api/session/start").status_code == 403          # e.g. a cross-site form post
+    assert c.post("/api/recording/start").status_code == 403
+    assert c.post("/api/session/end", headers={"X-ConsentLens": "1"}).status_code == 409  # passes guard

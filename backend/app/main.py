@@ -23,6 +23,18 @@ from shared.contracts import PrivacyRequest, RequestAction, RequestOrigin
 
 settings = Settings()
 app = FastAPI(title="ConsentLens")
+CSRF_HEADER = "x-consentlens"
+
+
+@app.middleware("http")
+async def require_app_header(request, call_next):
+    """State-changing calls must carry a custom header. Browsers cannot add it cross-site
+    without a CORS preflight (which we never grant), so other web pages can't start the
+    camera, recording, or voice on this machine."""
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != "1":
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"detail": "missing X-ConsentLens header"}, status_code=403)
+    return await call_next(request)
 _state: dict = {"session": None, "models": None, "voice": None}
 _lock = threading.Lock()
 REC_ID = re.compile(r"^rec_[0-9a-f]{12}$")

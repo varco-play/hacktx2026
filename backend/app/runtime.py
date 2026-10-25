@@ -135,7 +135,9 @@ class Session:
             "recording": rec,
             "finished_recordings": self.finished_recordings,
             "metrics": self.metrics(),
+            "landmark_stalls": {"timeouts": getattr(self.engine.signals, "timeouts", 0),
+                                "restarts": getattr(self.engine.signals, "restarts", 0)},
             "speaker_binding": "lip_motion_heuristic + single_candidate" if self.engine.signals else "single_candidate only (landmarker unavailable)",
             "gestures": "eyes closed 2 s / hands over eyes 1.5 s = blur; peace sign 1 s = unblur own face" if self.engine.signals else "unavailable",
-            "events": self.engine.event_log[-30:],
+            "events": list(self.engine.event_log)[-30:],
         }

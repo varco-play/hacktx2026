@@ -73,8 +73,6 @@ class VoicePipeline:
         import sounddevice as sd
 
         def cb(indata, frames, t, status):
-            if self._audio_t0_ms is None:
-                self._audio_t0_ms = self.session.now_ms()
             try:
                 self._audio.put_nowait(bytes(indata))
             except queue.Full:
@@ -117,8 +115,24 @@ class VoicePipeline:
                 await asyncio.sleep(2)  # reconnect; existing blur states are unaffected
 
     def _set_status(self, s: str) -> None:
+        if s == "CONNECTED":
+            self.on_connected()
         self.state = "LIVE" if s == "CONNECTED" else "DEGRADED"
         self.detail = s
+
+    def on_connected(self) -> None:
+        """New Muse stream: its audio clock starts at 0 now. Drop audio queued while
+        disconnected (stale commands must not execute late) and re-anchor the clock so
+        turn timestamps line up with video frames for speaker binding."""
+        dropped = 0
+        while True:
+            try:
+                self._audio.get_nowait()
+                dropped += 1
+            except queue.Empty:
+                break
+        self._audio_t0_ms = self.session.now_ms()
+        self.dropped_chunks = getattr(self, "dropped_chunks", 0) + dropped
 
     async def _on_turn(self, t: tuple) -> None:
         kind, tid, start, end, text = t

@@ -119,7 +119,7 @@ class VisionEngine:
         self._seen_event_ids: set[str] = set()
         self.unresolved_until_ms = -1
         self.last_events: list[dict] = []
-        self.event_log: list[dict] = []
+        self.event_log: deque = deque(maxlen=2000)  # bounded for long sessions
         self._vis_lock = threading.Lock()
         self._visibility: deque = deque(maxlen=1800)  # (t_ms, person_ids, {pid: mouth}) ~60 s
 

@@ -7,7 +7,7 @@ Gate 0 (preflight) + Gate 1 (protected pixels) + Gate 2 (session re-ID, tested o
 `shared/contracts.py`; `backend/app/{main,runtime,capture,config,voice}.py`; `backend/app/vision/{detector,engine,renderer}.py`; `backend/app/consent/{registry,policy,speaker}.py`; `backend/app/providers/{local_rules,meta_intent,meta_voice}.py`; `backend/app/media/recorders.py`; `frontend/index.html`; `tests/unit/*`; `scripts/*`.
 
 ## Exact commands/tests and actual outcomes
-- `.venv/bin/python -m pytest` → **65 passed** (policy, rules, LLM-output validation, engine privacy incl. re-entry 0 leak frames, fail-closed, recorder playable, health has no secrets).
+- `.venv/bin/python -m pytest` → **68 passed** (policy, rules, LLM-output validation, engine privacy incl. re-entry 0 leak frames, fail-closed, recorder playable, health has no secrets).
 - E2E on TEST INPUT via the real server: see `evaluation/results.md` (0/117 leak frames, 14 fps).
 - Meta Muse STT (file + realtime WS) and Muse Spark structured output: real 200 responses.
 
@@ -15,7 +15,7 @@ Gate 0 (preflight) + Gate 1 (protected pixels) + Gate 2 (session re-ID, tested o
 New: `shared/contracts.py` per docs/04 (+ `Privacy`, `IdentityStatus`, `OutputState`, `RequestOrigin`, `RequestAction` enums, `ConsentInterpretation.source`). Routes as docs/04 plus `/api/voice/start|stop` and env-gated `/api/dev/protect/{person_id}`.
 
 ## Known bugs / limits (do not overclaim)
-- Live-camera verified: capture 30 fps, detection, voice LIVE. **Not yet verified live:** peace sign with a real hand, eyes-closed 2 s, two-person lip-motion attribution with real speech (replay + unit tests only).
+- Verified on owner's live recordings: hands-over-eyes blur (3/3 correct person), real peace-sign release (1/1), new person entering gets a new ID, 2 IDs for 2 people. **Not yet verified:** eyes-closed 2 s on camera, two-person lip-motion attribution with real speech (thresholds uncalibrated).
 - Gemini key rejected (401) → `INTENT_PROVIDER=gemini` falls back to Muse Spark and says so in the UI.
 - Lip-motion thresholds (`MIN_ACTIVITY=0.012`, ratio 2.0) are uncalibrated guesses.
 - A protected face the detector misses for > 1.2 s (profile, occlusion without hands) is not shielded.

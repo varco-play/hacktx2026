@@ -68,3 +68,12 @@ def test_turn_ids_do_not_collide_after_reconnect():
     vp._gen += 1
     asyncio.run(vp._on_turn(("final", "0", 600, 1700, "please blur me")))
     assert len(sub) == 2
+
+
+def test_reconnect_drops_stale_audio_and_reanchors_clock():
+    vp, sub = pipeline()
+    for _ in range(5):
+        vp._audio.put(b"\x00" * 10)
+    vp.session.now_ms = lambda: 9000
+    vp.on_connected()
+    assert vp._audio.empty() and vp._audio_t0_ms == 9000 and vp.dropped_chunks == 5
