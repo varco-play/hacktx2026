@@ -109,3 +109,12 @@ def test_r2_config_parses_endpoint_and_bucket(monkeypatch):
     assert c["endpoint"] == "https://abc123.r2.cloudflarestorage.com" and c["bucket"] == "my-bucket"
     monkeypatch.delenv("R2_SECRET_ACCESS_KEY")
     assert r2_config() is None
+
+
+def test_preview_labels_never_touch_the_recorded_frame():
+    from backend.app.runtime import preview_labels
+    prot = np.zeros((480, 640, 3), np.uint8)
+    tracks = [{"box": [100, 100, 80, 80], "shielded": True, "privacy": "BLURRED_BY_REQUEST"}]
+    out = preview_labels(prot, tracks)
+    assert out is not prot and out.any() and not prot.any()
+    assert preview_labels(prot, [{"box": [1, 1, 5, 5], "shielded": False}]) is prot

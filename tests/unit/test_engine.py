@@ -268,13 +268,15 @@ def test_bad_frames_and_edge_faces_do_not_create_duplicate_people():
     assert len(e.registry.persons) == 2, [p for p in e.registry.persons]
 
 
-def test_real_track_swap_is_rechecked():
+def test_visible_track_that_is_really_a_protected_person_gets_blurred():
     s, e = make_sig()
     a, b, n = two_people(s, e)
-    s.frame = [face("B", 100, 100)]          # A's track position now shows B's face (B left right side)
-    res, n = run(e, s, 60, n)
-    assert any(ev["type"] == "IDENTITY_RECHECK" and ev["person_id"] == a for ev in e.event_log)
-    assert pid_of(res, 100) == b and len(e.registry.persons) == 2
+    e.submit(PrivacyRequest("s_test", "pb", RequestOrigin.MANUAL_TEST, None, b, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 20, n)                  # B enrolled while protected
+    s.frame = [face("B", 100, 100)]            # B's face now shows up on A's (visible) track
+    res, n = run(e, s, 40, n)
+    assert pid_of(res, 100) == b and res.tracks[0]["shielded"]
+    assert any(ev["type"] == "IDENTITY_RECHECK" for ev in e.event_log)
 
 
 def _hand_pts(fingers_up):
@@ -327,7 +329,7 @@ def test_stalled_landmarker_never_blocks_the_frame_loop_and_restarts():
         calls["n"] += 1
         if calls["n"] == 2:
             gate.wait(10)  # simulate MediaPipe hanging on the 2nd frame
-        return [], []
+        return [], [], []
     L.Signals._detect = staticmethod(detect)
     L._Landmarkers = lambda *a: FakeLM()
     try:
@@ -343,3 +345,149 @@ def test_stalled_landmarker_never_blocks_the_frame_loop_and_restarts():
     finally:
         gate.set()
         L.Signals._detect, L._Landmarkers = orig_detect, orig_lm
+
+
+
+def test_no_face_data_stored_for_people_who_never_asked():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    res, n = run(e, s, 40, n)
+    assert all(len(p.gallery) == 0 for p in e.registry.persons.values())
+
+def test_protect_enrolls_and_consent_deletes_face_data():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 20, n)
+    assert len(e.registry.get(a).gallery) >= 3 and len(e.registry.get(b).gallery) == 0
+    e.submit(PrivacyRequest("s_test", "ua", RequestOrigin.VOICE, "t", a, RequestAction.UNPROTECT, 0, True))
+    res, n = run(e, s, 1, n)
+    assert len(e.registry.get(a).gallery) == 0
+
+def test_visible_people_who_leave_are_forgotten():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    s.frame = [face("A", 100, 100)]            # B leaves
+    res, n = run(e, s, 30, n)
+    assert b not in e.registry.persons and a in e.registry.persons
+
+def test_protected_person_who_left_before_enrolment_keeps_newcomers_shielded():
+    s, e = make_sig()
+    s.frame = [face("A", 100, 100)]
+    res, n = run(e, s, 12, 1)
+    a = pid_of(res, 100)
+    s.frame = [face("A", 100, 100, score=0.5)] # face never "good" (e.g. covered) -> can't enrol
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 3, n)
+    s.frame = []                               # leaves
+    res, n = run(e, s, 30, n)
+    s.frame = [face("C", 300, 200)]            # anyone arriving now could be A
+    res, n = run(e, s, 20, n)
+    assert res.tracks[0]["shielded"] and res.tracks[0]["person_id"] is None
+
+
+
+def test_protected_head_stays_blurred_while_face_is_turned_away_for_long():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 20, n)
+    s.frame = [face("B", 400, 100)]                       # A turns sideways: face detector loses A
+    leaked = 0
+    for i in range(n, n + 90):                            # ~6 s, head drifting right
+        s.sig = {"faces": [], "hands": [], "heads": [{"box": (95 + (i - n) * 0.5, 95, 110, 120)}]}
+        pkt = packet(i); r = e.step(pkt)
+        tr = [t for t in r.tracks if t["person_id"] == a]
+        if not tr or not tr[0]["shielded"]:
+            leaked += 1
+        else:
+            x, y = tr[0]["box"][:2]
+            assert region_changed(pkt.bgr, r.protected_bgr, int(x) + 10, int(y) + 10, 60)
+    assert leaked == 0
+    s.frame = [face("A", 140, 100), face("B", 400, 100)]  # turns back: same track, same person, still blurred
+    s.sig = {"faces": [], "hands": [], "heads": []}
+    r = e.step(packet(n + 90))
+    t = next(t for t in r.tracks if t["person_id"] == a)
+    assert t["shielded"] and not t["head_only"]
+
+def test_without_a_head_estimate_lost_face_still_expires():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    s.frame = [face("B", 400, 100)]
+    res, n = run(e, s, 30, n)                             # 2 s, no pose head
+    assert all(t["person_id"] != a for t in res.tracks)
+
+def test_head_box_from_profile_keypoints():
+    import numpy as np
+    from backend.app.vision.landmarks import head_box
+    pts = np.zeros((33, 2), np.float32); vis = np.zeros(33, np.float32)
+    pts[0], pts[8], pts[11], pts[12] = (200, 150), (180, 145), (170, 230), (260, 230)  # nose, one ear, shoulders
+    vis[[0, 8, 11, 12]] = 1.0
+    x, y, w, h = head_box(pts, vis)
+    assert x < 180 < x + w and y < 145 < y + h and w >= 40
+    vis[:] = 0
+    assert head_box(pts, vis) is None
+
+
+def _av_case(a_lips, b_lips, voice, n=40):
+    """30 fps lips for A/B and a 50 Hz mic envelope over 2.6 s."""
+    import numpy as np
+    hist = [(t * 33, ("person_001", "person_002"), {"person_001": a_lips(t * 33), "person_002": b_lips(t * 33)})
+            for t in range(-150, n + 30)]
+    env = [(t, voice(t)) for t in range(-5000, (n + 30) * 33, 20)]
+    return hist, env
+
+def test_av_sync_picks_lips_that_follow_the_voice_not_the_laugher():
+    import math
+    voice = lambda t: 800 * max(0.0, math.sin(t / 90.0)) if 0 <= t <= 1300 else 20.0
+    talker = lambda t: 0.03 + 0.00012 * voice(t)                       # lips track loudness
+    laugher = lambda t: 0.03 + 0.09 * abs(math.sin(t / 37.0 + 1.0))    # big motion, wrong rhythm
+    still = lambda t: 0.03
+    turn = SpeechTurn("s_test", "t1", 0, 1300, "please blur me", True)
+    hist, env = _av_case(talker, laugher, voice)
+    m = match_speaker(turn, hist, env)
+    assert m.status == "MATCHED" and m.person_id == "person_001" and m.method == "av_sync"
+    hist, env = _av_case(laugher, talker, voice)
+    assert match_speaker(turn, hist, env).person_id == "person_002"
+    hist, env = _av_case(talker, talker, voice)                          # both "speaking" in sync
+    assert match_speaker(turn, hist, env).person_id is None
+    hist, env = _av_case(laugher, still, voice)                          # voice from someone offscreen
+    assert match_speaker(turn, hist, env).person_id is None
+
+def test_av_single_visible_person_not_blamed_for_offscreen_voice():
+    import math
+    voice = lambda t: 800 * max(0.0, math.sin(t / 90.0)) if 0 <= t <= 1300 else 20.0
+    turn = SpeechTurn("s_test", "t1", 0, 1300, "please blur me", True)
+    hist = [(t * 33, ("person_001",), {"person_001": 0.03 + 0.0005 * (t % 3)}) for t in range(-150, 70)]
+    env = [(t, voice(t)) for t in range(-5000, 2400, 20)]
+    m = match_speaker(turn, hist, env)
+    assert m.status == "OFFSCREEN" and m.person_id is None
+    hist = [(t * 33, ("person_001",), {"person_001": 0.03 + 0.00012 * voice(t * 33)}) for t in range(-150, 70)]
+    assert match_speaker(turn, hist, env).person_id == "person_001"
+
+def test_voice_envelope_is_recorded_on_session_clock():
+    import numpy as np
+    from tests.unit.test_voice import pipeline
+    vp, _ = pipeline()
+    loud = (np.ones(2400, np.int16) * 1000).tobytes()                    # 100 ms
+    vp._record_envelope(loud, 5000)
+    env = vp.audio_envelope()
+    assert len(env) == 5 and env[0][0] == 4910 and abs(env[0][1] - 1000) < 1
+
+
+
+def test_lost_track_never_jumps_onto_a_visible_friends_head():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)                          # A at x=100, B at x=400
+    s.frame = [face("A", 100, 100)]                     # B's face lost (hand over face)
+    heads = [{"box": (95, 95, 110, 120)},               # A's head (A visible)
+             {"box": (255, 95, 110, 120)}]              # some head between them, not overlapping B's box
+    for i in range(n, n + 10):
+        s.sig = {"faces": [], "hands": [], "heads": heads}
+        r = e.step(packet(i))
+    tb = next(t for t in r.tracks if t["person_id"] == b)
+    assert tb["box"][0] > 300, f"B's track drifted to {tb['box']}"
+    s.frame = [face("A", 100, 100), face("B", 400, 100)]  # B's face back: same track, same ID
+    s.sig = {"faces": [], "hands": [], "heads": []}
+    r = e.step(packet(n + 10))
+    assert pid_of(r, 400) == b

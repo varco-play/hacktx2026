@@ -70,7 +70,7 @@ Rekognition `IndexFaces`/`SearchFacesByImage` can provide collection IDs and com
 
 Python 3.11 (ARM64) local venv; OpenCV, NumPy, MediaPipe, PyAV or ffmpeg; FastAPI + Uvicorn; React/Vite/TypeScript UI. WebSocket for consent events/metrics and MJPEG for protected frames. API keys server-side only. If MJPEG bandwidth or responsiveness poor, test alternative streaming **after baseline**, not before.
 
-## Suggested source tree for agents to create
+## Source tree
 
 ```text
 backend/

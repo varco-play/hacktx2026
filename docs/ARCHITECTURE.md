@@ -1,4 +1,4 @@
-# 15 — System overview, Meta glasses path, and critique
+# Architecture, Meta glasses path, and critique
 
 Written 2026-10-25 after the live two-person tests. Numbers are measured unless marked otherwise.
 
@@ -32,9 +32,10 @@ backend/app/
     gemini_intent.py           Google Gemini JSON intent (primary when key + model valid)
   media/recorders.py           PyAV H.264 live writer (protected; diagnostic original only if enabled)
 frontend/index.html            dashboard: protected feed, people in frame, gesture meters, voice log, timeline
-tests/unit/                    68 tests: policy, rules, engine privacy, gestures, voice timing, recorder, API
+tests/unit/                    84 tests: policy, rules, engine privacy, gestures, voice timing, recorder, API
 scripts/                       run.sh (--dev), fetch_models.sh (checksummed), make_test_video.py
-docs/                          spec 00–14, this file, RESEARCH_RESULTS.md; evaluation/results.md = measurements
+backend/app/media/storage.py   Cloudflare R2 upload (protected/ presigned; raw restricted/, off by default)
+docs/                          architecture, contracts, privacy, research results; evaluation/results.md = measurements
 ```
 
 ## 3. Tools
@@ -44,7 +45,7 @@ docs/                          spec 00–14, this file, RESEARCH_RESULTS.md; eva
 | Capture | OpenCV AVFoundation | one owner of the Mac webcam (glasses stand-in) |
 | Face detection | OpenCV YuNet (ONNX, 230 KB) | 3–6 ms/frame on M4, landmarks for quality gate |
 | Session re-ID | OpenCV SFace (128-d) | 4–8 ms; same person 0.84–1.0 vs others ≤0.3 on our footage |
-| Lips / eyes / hands | MediaPipe Face Landmarker (+blendshapes), Hand Landmarker | 5.8 ms + 8.2 ms (hands every 2nd frame) |
+| Lips / eyes / hands / head | MediaPipe Face (+blendshapes), Hand, Pose-lite landmarkers | face every frame; hands and pose alternate frames; whole engine ~26 ms p50 on M4 |
 | Speech to text | Meta Muse Voice Transcribe realtime WS | partial + final turns with timing |
 | Intent | local regex rules → Gemini (if key) → Muse Spark | rules 0 ms; Spark 1–2.4 s; strict local validation |
 | Recording | PyAV / libx264, ms timestamps | blur is in the saved pixels, VFR-safe at 30 fps |
@@ -97,10 +98,10 @@ Glasses-specific details that matter: the privacy LED should change pattern when
 1. **Footage before the request stays visible.** We blur only from the moment someone asks. Fix: a 3–5 s delayed write buffer that back-applies blur to the requester's earlier frames; on glasses, stage B processes the whole clip.
 2. **Peace sign is the most common photo pose.** A blurred person posing for a selfie can unblur themselves by accident. Fix: hold 2 s **plus** a confirmation (chime + "say yes" or a second gesture), and show a 3-2-1 countdown.
 3. **Face-only blur.** Clothes, body, tattoos, voice and context still identify. Fix: MediaPipe person segmentation for optional body blur; mute/pitch-shift the requester's voice in saved audio (we save video only today).
-4. **Detector misses = possible exposure.** Profile views or occlusion longer than 1.2 s drop the face box. Fix: head/body tracking (pose landmarker) so a protected person's region stays shielded even without a frontal face; measure leak frames per trial.
-5. **Who-spoke is a heuristic.** Lip motion fires on laughing/eating; an off-camera speaker plus a talking visible person can mis-bind. Fix: correlate the audio energy envelope with each face's lip opening (cheap, much stronger), then mic-array direction on glasses. Thresholds still need calibration on real speech.
-6. **We compute embeddings for everyone**, including people who never asked. Biometric laws (e.g., Texas CUBI, Illinois BIPA) care about this. Fix ("privacy-minimal re-ID"): keep galleries only for people who requested blur; everyone else is track-only, and their features are discarded after the comparison.
-7. **The bystander gets no confirmation.** They don't know it worked. Fix: audible chime/TTS and an on-screen badge now; LED pattern on glasses.
+4. ~~**Detector misses = possible exposure.**~~ *Implemented 2026-10-25:* lost faces follow the MediaPipe pose head (guarded so a track can't jump to a visible friend's head). Remaining: Profile views or occlusion longer than 1.2 s drop the face box. Fix: head/body tracking (pose landmarker) so a protected person's region stays shielded even without a frontal face; measure leak frames per trial.
+5. **Who-spoke is a heuristic.** *Improved 2026-10-25:* audio-visual sync (lip opening vs mic loudness, ±200 ms lag search) with a per-person self-calibrating noise floor. Remaining: Lip motion fires on laughing/eating; an off-camera speaker plus a talking visible person can mis-bind. Fix: correlate the audio energy envelope with each face's lip opening (cheap, much stronger), then mic-array direction on glasses. Thresholds still need calibration on real speech.
+6. ~~**We compute embeddings for everyone**~~ *Implemented 2026-10-25:* features are stored only for people who asked for blur, deleted on consent/departure. Original note:, including people who never asked. Biometric laws (e.g., Texas CUBI, Illinois BIPA) care about this. Fix ("privacy-minimal re-ID"): keep galleries only for people who requested blur; everyone else is track-only, and their features are discarded after the comparison.
+7. ~~**The bystander gets no confirmation.**~~ *Implemented 2026-10-25:* chime, spoken line, badge, and preview-only "blurred ✓ / checking…" labels. Original note: They don't know it worked. Fix: audible chime/TTS and an on-screen badge now; LED pattern on glasses.
 8. **Cloud audio.** Every word near the wearer goes to the STT provider. Fix: on-device keyword spotting for the fixed phrases (instant, offline); cloud only for complex sentences, with consent.
 9. **Wearer can still read the original** when the diagnostic file is enabled. Fix: don't write it in production, or encrypt it with an escrow key the wearer can't use.
 10. **Scale and session limits.** Tuned for 2–4 people; a restart forgets refusals by design. Fix: crowd mode (shield all unknowns), clear disclosure of reset behavior.

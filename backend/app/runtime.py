@@ -19,6 +19,23 @@ from backend.app.vision.renderer import full_shield
 from shared.contracts import FramePacket, OutputState
 
 
+def preview_labels(protected, tracks: list):
+    """Live-preview-only feedback so a bystander can SEE their request worked.
+    Drawn on a copy; the recorded protected file never gets these labels."""
+    marks = [t for t in tracks if t.get("shielded")]
+    if not marks:
+        return protected
+    out = protected.copy()
+    for t in marks:
+        x, y, w, h = t["box"]
+        ok = t.get("privacy") == "BLURRED_BY_REQUEST"
+        label, color = ("blurred", (90, 200, 90)) if ok else ("checking...", (40, 170, 240))
+        ty = max(14, int(y) - 8)
+        cv2.rectangle(out, (int(x), ty - 13), (int(x) + 9 * len(label) + 8, ty + 4), (25, 25, 25), -1)
+        cv2.putText(out, label, (int(x) + 4, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
+    return out
+
+
 class Session:
     def __init__(self, settings: Settings, source, face_models, source_label: str, signals=None, storage=None):
         self.settings = settings
@@ -142,7 +159,7 @@ class Session:
             with self._lock:
                 if self.recorder is not None:
                     self.recorder.write(frame, protected, t_ms)
-            ok, jpg = cv2.imencode(".jpg", protected, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            ok, jpg = cv2.imencode(".jpg", preview_labels(protected, tracks), [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ok:
                 self.latest_jpeg = jpg.tobytes()
             self.latest_tracks, self.output_state = tracks, state

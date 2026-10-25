@@ -22,3 +22,19 @@ models/*.task
 evaluation/captures/
 
 .DS_Store
+
+# Local working notes and assistant/tooling config (not part of the project)
+CLAUDE.md
+AGENTS.md
+.claude/
+HANDOFF.md
+DECISIONS_LOG.md
+OWNER_START_HERE.md
+history/
+docs/01_DECISIONS.md
+docs/02_RESEARCH_AND_VALIDATION.md
+docs/05_BUILD_SEQUENCE.md
+docs/08_COLLABORATION.md
+docs/11_AGENT_PROMPTS.md
+docs/13_REQUIREMENTS_TRACEABILITY.md
+docs/14_OWNER_QA_AND_RELEASE_CHECK.md

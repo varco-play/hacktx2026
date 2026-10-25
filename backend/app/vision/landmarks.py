@@ -61,7 +61,31 @@ class _Landmarkers:
                 base_options=mpt.BaseOptions(model_asset_path=str(models_dir / "hand_landmarker.task")),
                 running_mode=vision.RunningMode.VIDEO, num_hands=max_hands,
                 min_hand_detection_confidence=0.5, min_tracking_confidence=0.5))
+        self.pose = None
+        if (models_dir / "pose_landmarker_lite.task").is_file():
+            self.pose = vision.PoseLandmarker.create_from_options(vision.PoseLandmarkerOptions(
+                base_options=mpt.BaseOptions(model_asset_path=str(models_dir / "pose_landmarker_lite.task")),
+                running_mode=vision.RunningMode.VIDEO, num_poses=max_faces,
+                min_pose_detection_confidence=0.5, min_tracking_confidence=0.5))
         self.last_ts = -1
+
+
+HEAD_POINTS = range(0, 11)   # nose, eyes, ears, mouth corners (visible even in profile)
+SHOULDERS = (11, 12)
+
+
+def head_box(pts: np.ndarray, vis: np.ndarray) -> tuple | None:
+    """Head box from pose keypoints; works for profile / back-of-head where face detectors fail."""
+    head = [pts[i] for i in HEAD_POINTS if vis[i] > 0.5]
+    if len(head) < 2:
+        return None
+    head = np.array(head)
+    cx, cy = head.mean(axis=0)
+    span = float(max(np.ptp(head[:, 0]), np.ptp(head[:, 1])))
+    if vis[SHOULDERS[0]] > 0.5 and vis[SHOULDERS[1]] > 0.5:
+        span = max(span, 0.45 * float(np.linalg.norm(pts[SHOULDERS[0]] - pts[SHOULDERS[1]])))
+    size = max(span * 1.5, 30.0)
+    return (float(cx - size / 2), float(cy - size * 0.55), size, size * 1.1)
 
 
 class Signals:
@@ -82,6 +106,7 @@ class Signals:
         self.hands_every, self.budget_ms, self.restart_ms = hands_every, budget_ms, restart_ms
         self._n = 0
         self._last_hands: list = []
+        self._last_heads: list = []
         self.timeouts = 0
         self.restarts = 0
         self._start_worker()
@@ -103,20 +128,22 @@ class Signals:
                 self._lm = self._pool.submit(_Landmarkers, self.models_dir, self.max_faces, self.max_hands).result()
                 self._pending = None
                 self.restarts += 1
-            return {"faces": [], "hands": self._last_hands, "stalled": True}
+            return {"faces": [], "hands": self._last_hands, "heads": self._last_heads, "stalled": True}
         self._n += 1
-        do_hands = self._n % self.hands_every == 0
+        do_hands = self._n % self.hands_every == 0  # hands and pose alternate frames (heat budget)
         fut = self._pool.submit(self._detect, self._lm, bgr, int(t_ms), do_hands)
         try:
-            faces, hands = fut.result(timeout=self.budget_ms / 1000)
+            faces, hands, heads = fut.result(timeout=self.budget_ms / 1000)
         except _Timeout:
             self.timeouts += 1
             self._pending, self._pending_since = fut, now
-            return {"faces": [], "hands": self._last_hands, "stalled": True}
+            return {"faces": [], "hands": self._last_hands, "heads": self._last_heads, "stalled": True}
         self._pending = None
         if hands is not None:
             self._last_hands = hands
-        return {"faces": faces, "hands": self._last_hands}
+        if heads is not None:
+            self._last_heads = heads
+        return {"faces": faces, "hands": self._last_hands, "heads": self._last_heads}
 
     @staticmethod
     def _detect(lm: _Landmarkers, bgr: np.ndarray, t_ms: int, do_hands: bool):
@@ -136,11 +163,19 @@ class Signals:
             faces.append({"c": (float(c[0]), float(c[1])),
                           "mouth": float(np.linalg.norm(pt(UPPER_INNER) - pt(LOWER_INNER)) / eye),
                           "eyes_closed": float(min(bs.get("eyeBlinkLeft", 0.0), bs.get("eyeBlinkRight", 0.0)))})
-        hands = None
+        hands = heads = None
+        if lm.pose is not None and not do_hands:
+            heads = []
+            for pl in lm.pose.detect_for_video(img, ts).pose_landmarks:
+                pts = np.array([[p.x * w, p.y * h] for p in pl], dtype=np.float32)
+                vis = np.array([getattr(p, "visibility", 1.0) or 0.0 for p in pl], dtype=np.float32)
+                b = head_box(pts, vis)
+                if b is not None:
+                    heads.append({"box": b})
         if lm.hand is not None and do_hands:
             hands = []
             for hl in lm.hand.detect_for_video(img, ts).hand_landmarks:
                 pts = np.array([[p.x * w, p.y * h] for p in hl], dtype=np.float32)
                 c = pts[list(PALM)].mean(axis=0)
                 hands.append({"c": (float(c[0]), float(c[1])), "pts": pts, "peace": is_peace(pts)})
-        return faces, hands
+        return faces, hands, heads

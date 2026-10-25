@@ -1,6 +1,6 @@
 # 07 — External credentials, installs, and operational setup
 
-**Do not send passwords or API keys in chat, a committed file, screenshots, terminal recordings or issue comments.** Put local secrets only in repo-root `.env`, load server-side, keep `.env` in `.gitignore`. Use separate/restricted keys where possible, low spend caps, review provider privacy settings, rotate any leaked token. Agents should never ask owner to paste secrets into prompts.
+**Do not send passwords or API keys in chat, a committed file, screenshots, terminal recordings or issue comments.** Put local secrets only in repo-root `.env`, load server-side, keep `.env` in `.gitignore`. Use separate/restricted keys where possible, low spend caps, review provider privacy settings, rotate any leaked token.
 
 ## Owner credential checklist — required vs optional
 
@@ -30,7 +30,7 @@ Read file at repository root. `ENABLE_DIAGNOSTIC_ORIGINAL=false` by default; ori
 ## Setup on Apple Silicon Macs
 
 1. Install native Python 3.11 and Node LTS; `python3 --version`, `node --version`, `uname -m` (expect arm64). Install FFmpeg and ensure `ffmpeg -version`. Verify camera/mic OS permission to terminal or app hosting Python.
-2. Create `.venv` with `python3.11 -m venv .venv`, source `source .venv/bin/activate`, and run package install from **agents' tested `requirements.txt` or lockfile**. Do not blindly mix OpenCV wheels. Confirm `python -c 'import cv2; print(cv2.__version__,hasattr(cv2,"FaceDetectorYN"),hasattr(cv2,"FaceRecognizerSF"))'`.
+2. Create `.venv` with `python3.11 -m venv .venv`, source `source .venv/bin/activate`, and run package install from the tested `requirements.lock.txt`. Do not blindly mix OpenCV wheels. Confirm `python -c 'import cv2; print(cv2.__version__,hasattr(cv2,"FaceDetectorYN"),hasattr(cv2,"FaceRecognizerSF"))'`.
 3. Use official OpenCV model download links, record exact model filenames, sizes/checksums and redistribution license in `models/MANIFEST.md`. Confirm bytes are ONNX binaries rather than Git LFS pointer text.
 4. Install MediaPipe's correct Python package and task face landmarker bundle per official docs; verify a 2-face sample locally before depending on it. Record NUM_FACES/max face setting; test pixel coord handling and mirroring.
 5. Setup Vite/React frontend, FastAPI backend on localhost. Confirm local camera backend and single webcam owner. Never expose dev server to public internet while raw diagnostic routes exist.

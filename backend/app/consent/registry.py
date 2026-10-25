@@ -19,7 +19,7 @@ GALLERY_MAX = 12
 class Person:
     person_id: str
     privacy: Privacy = Privacy.VISIBLE_NO_REQUEST
-    gallery: list = field(default_factory=list)  # np.ndarray (1,128) SFace features
+    gallery: list = field(default_factory=list)  # SFace features — ONLY while this person is protected
     first_seen_ms: int = 0
     last_seen_ms: int = 0
     protected_at_ms: Optional[int] = None
@@ -71,7 +71,11 @@ class PersonRegistry:
         p.privacy = Privacy.VISIBLE_BY_CONSENT
         p.released_at_ms = t_ms
         p.protect_source = source
+        p.gallery.clear()  # consented: no reason to keep their face features
         return True
+
+    def remove(self, person_id: str) -> None:
+        self.persons.pop(person_id, None)
 
     def any_protected(self) -> bool:
         return any(p.protected for p in self.persons.values())

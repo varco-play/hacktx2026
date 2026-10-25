@@ -38,6 +38,8 @@ class VoicePipeline:
         # decisions run off the receive loop so one slow LLM call never stalls later turns
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="voice-decide")
         self._gen = 0
+        self._env: deque = deque(maxlen=50 * 60)  # (t_ms, rms) last ~60 s
+        self._env_lock = threading.Lock()
         self.sync_decisions = False  # turn ids already decided (partial fast path or final)
         self.llm, self.fallback, self.intent_label = self._build_interpreters(settings)
 
@@ -73,6 +75,7 @@ class VoicePipeline:
         import sounddevice as sd
 
         def cb(indata, frames, t, status):
+            self._record_envelope(bytes(indata), self.session.now_ms())
             try:
                 self._audio.put_nowait(bytes(indata))
             except queue.Full:
@@ -88,6 +91,25 @@ class VoicePipeline:
             return
         self._thread = threading.Thread(target=lambda: asyncio.run(self._run()), name="voice", daemon=True)
         self._thread.start()
+
+    def _record_envelope(self, pcm: bytes, t_end_ms: int) -> None:
+        """Mic loudness every 20 ms on the session clock (for audio-visual speaker sync).
+        Only loudness numbers are kept — no audio is stored."""
+        import numpy as np
+        a = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+        step = meta_voice.SAMPLE_RATE // 50  # 20 ms
+        n = len(a) // step
+        if n == 0:
+            return
+        dur = len(a) * 1000 // meta_voice.SAMPLE_RATE
+        with self._env_lock:
+            for i in range(n):
+                rms = float(np.sqrt(np.mean(a[i * step:(i + 1) * step] ** 2)))
+                self._env.append((t_end_ms - dur + i * 20 + 10, rms))
+
+    def audio_envelope(self) -> list:
+        with self._env_lock:
+            return list(self._env)
 
     def stop(self) -> None:
         self._stop.set()
@@ -184,7 +206,7 @@ class VoicePipeline:
             record.update(intent="UNCLEAR", source="none", action=None)
             self.turns.append(record)
             return record
-        match = match_speaker(turn, self.session.engine.visibility_history())
+        match = match_speaker(turn, self.session.engine.visibility_history(), self.audio_envelope())
         req = resolve_request(turn, parsed, match, self.session.session_id, f"voice_{turn.turn_id}")
         if req is not None:
             self.session.engine.submit(req)

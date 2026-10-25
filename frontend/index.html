@@ -29,6 +29,10 @@
   .log { max-height:260px; overflow:auto; font:12px ui-monospace,Menlo,monospace; }
   .log div { padding:3px 0; border-bottom:1px dashed var(--line); overflow-wrap:anywhere; }
   .metrics { color:var(--muted); font-size:12px; margin-top:8px; }
+  .stage { position:relative; }
+  #toast { position:absolute; left:50%; top:12px; transform:translateX(-50%); padding:10px 18px; border-radius:10px;
+           font-size:20px; font-weight:600; color:#0b0d12; opacity:0; transition:opacity .25s; pointer-events:none; }
+  #toast.show { opacity:.95; }
   .banner { margin-top:8px; padding:6px 10px; border-radius:6px; background:#3a2a00; color:var(--warn); display:none; }
   a { color:var(--accent); }
 </style>
@@ -46,13 +50,14 @@
   <div>
     <section>
       <h2>Protected live preview</h2>
-      <img id="preview" alt="Protected preview">
+      <div class="stage"><img id="preview" alt="Protected preview"><div id="toast"></div></div>
       <div class="banner" id="testBanner"></div>
       <div class="controls">
         <button class="primary" id="bStart">Start session</button>
         <button id="bRec">Start recording</button>
         <button id="bVoice">Start voice</button>
         <button class="danger" id="bEnd">End session</button>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--muted)"><input type="checkbox" id="speak" checked> spoken confirmations</label>
       </div>
       <div class="metrics" id="metrics"></div>
     </section>
@@ -66,7 +71,7 @@
       <h2>People in this session</h2>
       <table><thead><tr><th>In frame</th><th>Privacy</th><th>Lips</th><th>Gesture</th><th></th></tr></thead><tbody id="people"></tbody></table>
       <div class="metrics" id="away"></div>
-      <div class="metrics">Blur: say "blur me", close your eyes 2 s, or cover your eyes 1.5 s. Unblur your own face: ✌ peace sign 1 s or say "unblur me". "Visible, no request" is not consent.</div>
+      <div class="metrics">Blur: say "blur me", close your eyes 2 s, or cover your eyes 1.5 s. Unblur your own face: ✌ peace sign 1 s or say "unblur me". "Visible, no request" is not consent. Face data is kept only for people who asked to be blurred.</div>
     </section>
     <section style="margin-top:16px">
       <h2>Voice turns</h2>
@@ -99,6 +104,44 @@ $("bVoice").onclick = async () => {
   await api(live ? "/api/voice/stop" : "/api/voice/start");
 };
 async function devProtect(pid) { await api(`/api/dev/protect/${encodeURIComponent(pid)}`); }
+
+// ---- bystander confirmation: chime + spoken line + badge, once per privacy event ----
+const seenEvents = new Set();
+let audioCtx = null, primed = false;
+function chime(up) {
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const now = audioCtx.currentTime;
+    (up ? [523, 784] : [784, 523]).forEach((f, i) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.frequency.value = f; o.type = "sine";
+      g.gain.setValueAtTime(0.0001, now + i * 0.16);
+      g.gain.exponentialRampToValueAtTime(0.25, now + i * 0.16 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.16 + 0.15);
+      o.connect(g).connect(audioCtx.destination); o.start(now + i * 0.16); o.stop(now + i * 0.16 + 0.16);
+    });
+  } catch (e) {}
+}
+function say(text) {
+  if (!$("speak").checked || !window.speechSynthesis) return;
+  speechSynthesis.cancel(); speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+function toast(text, color) {
+  const t = $("toast"); t.textContent = text; t.style.background = color; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2500);
+}
+function confirmEvents(events) {
+  for (const e of events || []) {
+    if (seenEvents.has(e.event_id)) continue;
+    seenEvents.add(e.event_id);
+    if (!primed) continue;  // don't replay history when the page opens
+    const how = e.details && e.details.gesture ? e.details.gesture.replace(/_/g, " ") : (e.source || "").toLowerCase();
+    if (e.type === "PRIVACY_ACTIVATED") { chime(true); toast(`🔒 ${e.person_id} blurred (${how})`, "var(--ok)"); say("You're blurred."); }
+    if (e.type === "PRIVACY_RELEASED") { chime(false); toast(`👁 ${e.person_id} visible — consented (${how})`, "var(--accent)"); say("You're visible again."); }
+    if (e.type === "REQUEST_UNRESOLVED") { toast("⚠ Couldn't tell who said that", "var(--warn)"); say("Sorry, I couldn't tell who said that. Please look at the camera and say it again."); }
+  }
+  primed = true;
+}
 
 function lipBar(v) {
   const w = Math.min(60, Math.round(v * 200));
@@ -143,7 +186,7 @@ function render() {
     const prot = p.privacy === "BLURRED_BY_REQUEST";
     const btn = health.dev_controls_enabled && !prot ? `<button onclick="devProtect('${esc(t.person_id)}')" title="development only">MANUAL_TEST</button>` : "";
     const gest = meter("eyes closed", g.eyes_closed_s, 2) + meter("hands on eyes", g.cover_s, 1.5) + meter("✌ peace", g.peace_s, 1) || "–";
-    return `<tr><td>${esc(t.person_id)}${t.coasting ? ' <span style="color:var(--warn)">(lost, shielding)</span>' : ""}</td><td>${privacyLabel(p)}</td>
+    return `<tr><td>${esc(t.person_id)}${t.head_only ? ' <span style="color:var(--warn)">(face turned — following head)</span>' : t.coasting ? ' <span style="color:var(--warn)">(lost, shielding)</span>' : ""}</td><td>${privacyLabel(p)}</td>
       <td>${t.mouth_open != null ? lipBar(t.mouth_open) : "–"}</td><td>${gest}</td><td>${btn}</td></tr>`;
   });
   rows = rows.concat(tracks.filter(t => !t.person_id).map(t =>
@@ -166,7 +209,7 @@ async function boot() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const connect = () => {
     const ws = new WebSocket(`${proto}://${location.host}/api/events`);
-    ws.onmessage = (ev) => { st = JSON.parse(ev.data); render(); };
+    ws.onmessage = (ev) => { st = JSON.parse(ev.data); render(); confirmEvents(st.events); };
     ws.onclose = () => setTimeout(connect, 1000);
   };
   connect();
