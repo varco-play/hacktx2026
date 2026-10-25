@@ -18,12 +18,12 @@ from shared.contracts import FramePacket, OutputState
 
 
 class Session:
-    def __init__(self, settings: Settings, source, face_models, source_label: str):
+    def __init__(self, settings: Settings, source, face_models, source_label: str, mouth=None):
         self.settings = settings
         self.session_id = "s_" + secrets.token_hex(4)
         self.source = source
         self.source_label = source_label  # "CAMERA" or "TEST INPUT: <file>"
-        self.engine = VisionEngine(self.session_id, face_models.detect, face_models.feature)
+        self.engine = VisionEngine(self.session_id, face_models.detect, face_models.feature, mouth=mouth)
         self.recorder: Optional[PairedRecorder] = None
         self.finished_recordings: list[dict] = []
         self._t0 = time.monotonic()
@@ -135,5 +135,6 @@ class Session:
             "recording": rec,
             "finished_recordings": self.finished_recordings,
             "metrics": self.metrics(),
+            "speaker_binding": "lip_motion_heuristic + single_candidate" if self.engine.mouth else "single_candidate only (landmarker unavailable)",
             "events": self.engine.event_log[-30:],
         }

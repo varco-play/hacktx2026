@@ -15,6 +15,15 @@ def test_paired_recorder_writes_playable_protected_file(tmp_path: Path):
     assert 1.5 < p["duration_s"] < 2.5
     assert (tmp_path / f"{info['recording_id']}_original_DIAGNOSTIC.mp4").is_file()
 
+def test_recorder_handles_30fps_jitter_and_duplicate_timestamps(tmp_path: Path):
+    rec = PairedRecorder(tmp_path, 640, 480, 15, diagnostic_original=False, t0_ms=0)
+    ts = [0, 33, 66, 66, 99, 140, 141, 170] + [200 + i * 33 for i in range(60)]
+    for t in ts:
+        rec.write(np.zeros((480, 640, 3), np.uint8), np.zeros((480, 640, 3), np.uint8), t)
+    info = rec.close()
+    assert info["error"] is None and info["frames"] == len(ts)
+    assert probe(tmp_path / f"{info['recording_id']}_protected.mp4")["frames"] == len(ts)
+
 def test_health_exposes_no_secrets_and_no_original_route(monkeypatch):
     monkeypatch.setenv("META_MODEL_API_KEY", "sk-test-SECRET-VALUE-123")
     from fastapi.testclient import TestClient

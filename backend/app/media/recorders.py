@@ -23,6 +23,9 @@ class VideoWriter:
         self.stream.width, self.stream.height = width, height
         self.stream.pix_fmt = "yuv420p"
         self.stream.time_base = Fraction(1, 1000)
+        # Encoder must also count in ms: camera may deliver 30 fps while rate=15,
+        # and 1/15 s codec ticks would give two frames the same DTS (EINVAL 22).
+        self.stream.codec_context.time_base = Fraction(1, 1000)
         self.stream.options = {"preset": "ultrafast", "crf": "23"}
         self.last_pts = -1
         self.frames = 0

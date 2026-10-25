@@ -77,7 +77,12 @@ def session_start():
         else:
             src = CameraSource(settings.camera_index, settings.width, settings.height, settings.fps)
             label = "CAMERA"
-        sess = Session(settings, src, _models(), label)
+        try:
+            from backend.app.vision.landmarks import MouthTracker
+            mouth = MouthTracker(settings.models_dir)  # fresh per session (VIDEO-mode timestamps)
+        except Exception:
+            mouth = None  # speaker binding falls back to single_candidate; shown in /api/health
+        sess = Session(settings, src, _models(), label, mouth=mouth)
         try:
             sess.start()
         except Exception as exc:

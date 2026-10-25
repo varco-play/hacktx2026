@@ -147,3 +147,40 @@ def test_speaker_binding_single_candidate_vs_ambiguous():
     assert m2.status == "AMBIGUOUS" and m2.person_id is None
     m3 = match_speaker(SpeechTurn("s_test", "t3", 10**7, 10**7 + 500, "x", True), e.visibility_history())
     assert m3.status == "UNKNOWN" and m3.person_id is None
+
+
+def _hist(n, a_open, b_open):
+    return [(t * 66, ("person_001", "person_002"), {"person_001": a_open(t), "person_002": b_open(t)})
+            for t in range(n)]
+
+def test_lip_motion_picks_the_moving_mouth_and_rejects_ties():
+    import math
+    talk = lambda t: 0.05 + 0.12 * abs(math.sin(t * 1.3))
+    still = lambda t: 0.02
+    turn = SpeechTurn("s_test", "t1", 300, 1500, "please blur me", True)
+    m = match_speaker(turn, _hist(30, talk, still))
+    assert m.status == "MATCHED" and m.person_id == "person_001" and m.method == "lip_motion_heuristic"
+    m = match_speaker(turn, _hist(30, still, talk))
+    assert m.person_id == "person_002"
+    both = match_speaker(turn, _hist(30, talk, talk))      # both talking
+    assert both.status == "AMBIGUOUS" and both.person_id is None
+    none = match_speaker(turn, _hist(30, still, still))    # offscreen voice, nobody moving
+    assert none.status == "AMBIGUOUS" and none.person_id is None
+    no_mouth = match_speaker(turn, [(t * 66, ("person_001", "person_002")) for t in range(30)])
+    assert no_mouth.person_id is None
+
+def test_mouth_failure_does_not_break_privacy_path():
+    s = Script()
+    def bad_mouth(bgr, t):
+        raise RuntimeError("landmarker down")
+    e = VisionEngine("s_test", s.detect, s.feature, mouth=bad_mouth)
+    s.frame = [face("A", 100, 100)]
+    res, n = run(e, s, 6, 1)
+    assert res.output_state == OutputState.NORMAL and res.tracks[0]["person_id"]
+
+
+def test_single_visible_face_with_still_lips_is_not_blamed_for_offscreen_voice():
+    turn = SpeechTurn("s_test", "t1", 300, 1500, "please blur me", True)
+    hist = [(t * 66, ("person_001",), {"person_001": 0.02}) for t in range(30)]
+    m = match_speaker(turn, hist)
+    assert m.status == "OFFSCREEN" and m.person_id is None

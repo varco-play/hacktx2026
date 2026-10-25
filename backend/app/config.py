@@ -24,6 +24,7 @@ class Settings:
     models_dir: str = str(ROOT / os.getenv("MODELS_DIR", "models"))
     diagnostic_original: bool = _bool("ENABLE_DIAGNOSTIC_ORIGINAL")
     dev_controls: bool = _bool("ENABLE_DEV_CONTROLS")  # manual test protect; off for judges
+    intent_provider: str = os.getenv("INTENT_PROVIDER", "gemini").strip().lower()  # gemini | muse
     test_video: str = os.getenv("TEST_VIDEO", "")  # replay file instead of camera (labeled)
 
     # Secrets: read here, never returned by any endpoint.

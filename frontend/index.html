@@ -64,7 +64,7 @@
   <div>
     <section>
       <h2>People in this session</h2>
-      <table><thead><tr><th>Person</th><th>Privacy</th><th>Visible</th><th></th></tr></thead><tbody id="people"></tbody></table>
+      <table><thead><tr><th>Person</th><th>Privacy</th><th>Visible</th><th>Lips</th><th></th></tr></thead><tbody id="people"></tbody></table>
       <div class="metrics">"Visible, no request" is not consent. Refusals stay latched for the session.</div>
     </section>
     <section style="margin-top:16px">
@@ -99,6 +99,10 @@ $("bVoice").onclick = async () => {
 };
 async function devProtect(pid) { await api(`/api/dev/protect/${encodeURIComponent(pid)}`); }
 
+function lipBar(v) {
+  const w = Math.min(60, Math.round(v * 200));
+  return `<span title="${v}" style="display:inline-block;height:8px;width:${w}px;background:var(--accent);border-radius:4px"></span>`;
+}
 function render() {
   const active = !!st.session_id;
   if (active && !previewOn) { $("preview").src = "/api/preview/protected?" + Date.now(); previewOn = true; }
@@ -119,7 +123,7 @@ function render() {
   $("bVoice").textContent = v.state !== "OFF" ? "Stop voice" : "Start voice";
 
   const m = st.metrics || {};
-  $("metrics").textContent = active ? `measured: ${m.processed_fps ?? "–"} fps · vision p50 ${m.vision_ms_p50 ?? "–"} ms · p95 ${m.vision_ms_p95 ?? "–"} ms · frames ${m.frames ?? 0}${st.error ? " · ERROR " + st.error : ""}` : "";
+  $("metrics").textContent = active ? `measured: ${m.processed_fps ?? "–"} fps · vision p50 ${m.vision_ms_p50 ?? "–"} ms · p95 ${m.vision_ms_p95 ?? "–"} ms · frames ${m.frames ?? 0} · binding: ${st.speaker_binding || "–"}${st.error ? " · ERROR " + st.error : ""}` : "";
 
   const visible = new Map((st.tracks || []).filter(t => t.person_id).map(t => [t.person_id, t]));
   const pending = (st.tracks || []).filter(t => !t.person_id);
@@ -127,13 +131,13 @@ function render() {
     const t = visible.get(p.person_id);
     const prot = p.privacy === "BLURRED_BY_REQUEST";
     const btn = health.dev_controls_enabled && !prot ? `<button onclick="devProtect('${esc(p.person_id)}')" title="development only">MANUAL_TEST protect</button>` : "";
-    return `<tr><td>${esc(p.person_id)}</td><td style="color:${prot ? "var(--bad)" : "var(--muted)"}">${prot ? "BLURRED (" + esc(p.protect_source) + ")" : "visible, no request"}</td><td>${t ? (t.coasting ? "lost (shielding)" : "yes") : "no"}</td><td>${btn}</td></tr>`;
+    return `<tr><td>${esc(p.person_id)}</td><td style="color:${prot ? "var(--bad)" : "var(--muted)"}">${prot ? "BLURRED (" + esc(p.protect_source) + ")" : "visible, no request"}</td><td>${t ? (t.coasting ? "lost (shielding)" : "yes") : "no"}</td><td>${t && t.mouth_open != null ? lipBar(t.mouth_open) : "–"}</td><td>${btn}</td></tr>`;
   });
-  rows = rows.concat(pending.map(t => `<tr><td>${esc(t.track_id)}</td><td style="color:var(--warn)">${esc(t.identity_status)}${t.shielded ? " · shielded" : ""}</td><td>yes</td><td></td></tr>`));
-  $("people").innerHTML = rows.join("") || `<tr><td colspan="4" style="color:var(--muted)">no faces yet</td></tr>`;
+  rows = rows.concat(pending.map(t => `<tr><td>${esc(t.track_id)}</td><td style="color:var(--warn)">${esc(t.identity_status)}${t.shielded ? " · shielded" : ""}</td><td>yes</td><td>–</td><td></td></tr>`));
+  $("people").innerHTML = rows.join("") || `<tr><td colspan="5" style="color:var(--muted)">no faces yet</td></tr>`;
 
   $("turns").innerHTML = (v.turns || []).slice().reverse().map(t =>
-    `<div>“${esc(t.text)}” → <b>${esc(t.intent)}</b>/${esc(t.speaker_ref)} via ${esc(t.source)} · speaker ${esc(t.speaker_status)} (${esc(t.speaker_method)}) · ${esc(t.action || "no-op")}${t.target ? " → " + esc(t.target) : ""}</div>`).join("") || "—";
+    `<div>“${esc(t.text)}” → <b>${esc(t.intent)}</b>/${esc(t.speaker_ref)} via ${esc(t.source)} · speaker ${esc(t.speaker_status)} (${esc(t.speaker_method)}${t.speaker_score != null ? " " + t.speaker_score + "/" + t.speaker_margin : ""}) · ${esc(t.action || "no-op")}${t.target ? " → " + esc(t.target) : ""}</div>`).join("") || "—";
   $("events").innerHTML = (st.events || []).slice().reverse().map(e =>
     `<div>${(e.t_ms / 1000).toFixed(1)}s ${esc(e.type)} ${esc(e.person_id || "")} ${e.source ? "[" + esc(e.source) + "]" : ""}</div>`).join("") || "—";
   const recs = st.finished_recordings || [];

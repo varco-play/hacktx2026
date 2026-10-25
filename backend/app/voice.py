@@ -6,6 +6,7 @@ directly, only `engine.submit()`.
 from __future__ import annotations
 
 import asyncio
+import os
 import queue
 import threading
 import time
@@ -32,11 +33,31 @@ class VoicePipeline:
         self._mic = None
         self._audio_t0_ms: Optional[int] = None  # session ms of first audio sample sent
         self._n = 0
-        self.llm = MuseSparkInterpreter(settings.meta_key) if settings.meta_key else None
+        self.llm, self.fallback, self.intent_label = self._build_interpreters(settings)
+
+    @staticmethod
+    def _build_interpreters(settings):
+        """Primary per INTENT_PROVIDER (default gemini); Muse Spark is the fallback on error."""
+        spark = MuseSparkInterpreter(settings.meta_key) if settings.meta_key else None
+        if settings.intent_provider == "gemini":
+            from backend.app.providers.gemini_intent import GeminiInterpreter, check_access
+            why = ""
+            if not settings.gemini_key:
+                why = "no GEMINI_API_KEY"
+            elif not os.getenv("GEMINI_MODEL"):
+                why = "GEMINI_MODEL not set"
+            else:
+                ok, detail = check_access(settings.gemini_key)
+                if ok:
+                    return GeminiInterpreter(settings.gemini_key), spark, \
+                        f"local_rules → gemini:{os.getenv('GEMINI_MODEL')} (fallback muse-spark-1.3)"
+                why = detail
+            return spark, None, f"local_rules → muse-spark-1.3 (gemini UNAVAILABLE: {why})"
+        return spark, None, "local_rules → muse-spark-1.3" if spark else "local_rules only"
 
     def status(self) -> dict:
         return {"state": self.state, "detail": self.detail, "stt": "muse-voice-transcribe-1.0",
-                "intent": "local_rules + muse-spark-1.3" if self.llm else "local_rules only",
+                "intent": self.intent_label,
                 "turns": list(self.turns)}
 
     def start(self) -> None:
@@ -105,6 +126,8 @@ class VoicePipeline:
         parsed = local_rules.interpret(turn)
         if parsed is None and self.llm is not None:
             parsed = self.llm.interpret(turn)
+            if parsed.reason_short.startswith("provider error") and self.fallback is not None:
+                parsed = self.fallback.interpret(turn)
         record = {"turn_id": turn.turn_id, "text": turn.text, "start_ms": turn.start_ms,
                   "end_ms": turn.end_ms}
         if parsed is None:
@@ -117,6 +140,7 @@ class VoicePipeline:
             self.session.engine.submit(req)
         record.update(intent=parsed.intent.value, speaker_ref=parsed.speaker_ref.value,
                       source=parsed.source, speaker_method=match.method, speaker_status=match.status,
+                      speaker_score=match.evidence_score, speaker_margin=match.runner_up_margin,
                       target=req.target_person_id if req else None,
                       action=req.action.value if req else None,
                       decide_ms=round((time.monotonic() - t0) * 1000),

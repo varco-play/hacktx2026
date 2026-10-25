@@ -71,10 +71,12 @@ def _center_dist(a, b) -> float:
 
 class VisionEngine:
     def __init__(self, session_id: str, detect: Callable, feature: Callable,
-                 config: Optional[EngineConfig] = None):
+                 config: Optional[EngineConfig] = None, mouth: Optional[Callable] = None):
         self.session_id = session_id
         self.detect = detect      # bgr -> list[Detection]
         self.feature = feature    # (bgr, Detection) -> unit (1,128) feature
+        self.mouth = mouth        # optional (bgr, t_ms) -> [(cx, cy, openness)]
+        self.mouth_now: dict = {}  # person_id -> latest openness (UI/diagnostics)
         self.cfg = config or EngineConfig()
         self.registry = PersonRegistry(session_id)
         self.tracks: list[Track] = []
@@ -109,8 +111,9 @@ class VisionEngine:
             dets = self.detect(pkt.bgr)
             self._associate(dets)
             self._identify(pkt, events)
+            mouths = self._mouths(pkt)
             with self._vis_lock:
-                self._visibility.append((pkt.t_ms, tuple(self.visible_person_ids())))
+                self._visibility.append((pkt.t_ms, tuple(self.visible_person_ids()), mouths))
             regions, state = self._decide_regions(pkt)
             out = render_protected(pkt.bgr, regions) if regions else pkt.bgr.copy()
         except Exception as exc:  # fail closed: no source pixels on error
@@ -177,6 +180,26 @@ class VisionEngine:
         for di, d in enumerate(dets):
             if di not in used_d:
                 self.tracks.append(Track(track_id=f"track_{next(self._tid)}", box=d.box, det=d))
+
+    def _mouths(self, pkt: FramePacket) -> dict:
+        """Lip openness per visible confirmed person. Failure = no evidence, never unshields."""
+        if self.mouth is None:
+            return {}
+        try:
+            samples = self.mouth(pkt.bgr, pkt.t_ms)
+        except Exception:
+            return {}
+        out = {}
+        for t in self.tracks:
+            if not t.person_id or t.missed:
+                continue
+            x, y, w, h = t.box
+            inside = [(o, (cx - x - w / 2) ** 2 + (cy - y - h / 2) ** 2) for cx, cy, o in samples
+                      if x - 0.2 * w <= cx <= x + 1.2 * w and y - 0.2 * h <= cy <= y + 1.2 * h]
+            if inside:
+                out[t.person_id] = min(inside, key=lambda v: v[1])[0]
+        self.mouth_now = out
+        return out
 
     def _is_clear(self, d: Detection) -> bool:
         return d.score >= self.cfg.clear_min_score and min(d.box[2], d.box[3]) >= self.cfg.clear_min_size
@@ -281,6 +304,7 @@ class VisionEngine:
                 "privacy": p.privacy.value if p else None,
                 "shielded": t.shielded,
                 "coasting": t.missed > 0,
+                "mouth_open": round(self.mouth_now[t.person_id], 3) if t.person_id in self.mouth_now else None,
                 "box": [round(v) for v in t.box],
             })
         return out

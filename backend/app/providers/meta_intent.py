@@ -48,15 +48,15 @@ class _Out(BaseModel):
     reason_short: str = Field(max_length=160)
 
 
-def parse_output(turn_id: str, content: str) -> ConsentInterpretation:
+def parse_output(turn_id: str, content: str, source: str = "muse_spark") -> ConsentInterpretation:
     """Strict validation; anything malformed becomes UNCLEAR (never a grant)."""
     try:
         o = _Out.model_validate(json.loads(content))
     except (ValidationError, json.JSONDecodeError, TypeError):
         return ConsentInterpretation(turn_id, Intent.UNCLEAR, SpeakerRef.UNKNOWN, True,
-                                     "invalid model output", "muse_spark")
+                                     "invalid model output", source)
     return ConsentInterpretation(turn_id, o.intent, o.speaker_ref, o.needs_clarification,
-                                 o.reason_short, "muse_spark")
+                                 o.reason_short, source)
 
 
 class MuseSparkInterpreter:

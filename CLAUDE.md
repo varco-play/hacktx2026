@@ -28,8 +28,7 @@ Small commits and frequent runnable checkpoints. Run tests before declaring done
 
 ## Team split (from the earlier kit — confirm in `DECISIONS_LOG.md` if it changes)
 
-- **Sarvar:** initial scaffold, backend/FastAPI, capture, recording pipeline, Meta/Gemini provider adapters.
-- **Abbos:** `backend/app/vision/` and frontend feature work.
+- **Sarvar owns all code** (decided 2026-10-24 19:20; no teammate code incoming). The earlier Abbos split is void.
 - Shared: `shared/contracts.py`, `backend/app/runtime.py`, `requirements*.txt`, `.env.example`, API routes. Coordinate before editing these.
 
 ## Project skills (`.claude/skills/`)
