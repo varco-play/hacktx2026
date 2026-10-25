@@ -245,10 +245,14 @@ def _voice_public() -> dict:
     if vp is None:
         return {"state": "OFF" if settings.voice_enabled else "DISABLED"}
     st = vp.status()
-    keep = ("intent", "action", "target", "speaker_status", "speaker_method", "source", "decide_ms",
+    keep = ("outcome", "intent", "action", "target", "speaker_status", "speaker_method", "source", "decide_ms",
             "apply_delay_ms", "early_partial", "turn_id")
     last = [{k: t.get(k) for k in keep} for t in st.get("turns", [])][-5:]
-    return {"state": st["state"], "detail": st.get("detail", ""), "intent_engine": st.get("intent"), "recent": last}
+    env = vp.audio_envelope()[-10:] if hasattr(vp, "audio_envelope") else []
+    # mic level 0..1 over the last 200 ms (rounded so the UI isn't pushed for noise)
+    level = round(min(1.0, max((v for _, v in env), default=0.0) / 3000.0), 1)
+    return {"state": st["state"], "detail": st.get("detail", ""), "intent_engine": st.get("intent"),
+            "recent": last, "mic_level": level}
 
 
 @app.get("/api/preview/protected")

@@ -64,7 +64,8 @@ class _Landmarkers:
                 min_hand_detection_confidence=0.5, min_tracking_confidence=0.5))
         self.pose = None
         import os
-        if os.getenv("POSE_TRACKING", "off").lower() in ("1", "on", "true") and \
+        # Pose links each hand to its own body (who made the gesture). On by default.
+        if os.getenv("POSE_TRACKING", "on").lower() in ("1", "on", "true") and \
                 (models_dir / "pose_landmarker_lite.task").is_file():
             self.pose = vision.PoseLandmarker.create_from_options(vision.PoseLandmarkerOptions(
                 base_options=mpt.BaseOptions(model_asset_path=str(models_dir / "pose_landmarker_lite.task")),
@@ -75,6 +76,18 @@ class _Landmarkers:
 
 HEAD_POINTS = range(0, 11)   # nose, eyes, ears, mouth corners (visible even in profile)
 SHOULDERS = (11, 12)
+WRISTS = (15, 16)
+BODY_POINTS = range(0, 25)   # head, shoulders, arms, hands, hips
+
+
+def body_box(pts: np.ndarray, vis: np.ndarray) -> tuple | None:
+    """Bounding box of the visible upper body (for showing whose hands are whose)."""
+    p = np.array([pts[i] for i in BODY_POINTS if vis[i] > 0.5])
+    if len(p) < 4:
+        return None
+    x0, y0 = p.min(axis=0)
+    x1, y1 = p.max(axis=0)
+    return (float(x0), float(y0), float(x1 - x0), float(y1 - y0))
 
 
 def head_box(pts: np.ndarray, vis: np.ndarray) -> tuple | None:
@@ -169,13 +182,17 @@ class Signals:
                           "look_down": float(min(bs.get("eyeLookDownLeft", 0.0), bs.get("eyeLookDownRight", 0.0)))})
         hands = heads = None
         if lm.pose is not None and not do_hands:
-            heads = []
+            heads = []  # one entry per detected BODY (pose): head box, body box, nose, wrists
             for pl in lm.pose.detect_for_video(img, ts).pose_landmarks:
                 pts = np.array([[p.x * w, p.y * h] for p in pl], dtype=np.float32)
                 vis = np.array([getattr(p, "visibility", 1.0) or 0.0 for p in pl], dtype=np.float32)
                 b = head_box(pts, vis)
-                if b is not None:
-                    heads.append({"box": b})
+                if b is None:
+                    continue
+                heads.append({"box": b, "body": body_box(pts, vis),
+                              "nose": tuple(map(float, pts[0])) if vis[0] > 0.5 else None,
+                              "wrists": [tuple(map(float, pts[i])) for i in WRISTS if vis[i] > 0.3],
+                              "shoulder_w": float(np.linalg.norm(pts[11] - pts[12])) if min(vis[11], vis[12]) > 0.5 else None})
         if lm.hand is not None and do_hands:
             hands = []
             for hl in lm.hand.detect_for_video(img, ts).hand_landmarks:

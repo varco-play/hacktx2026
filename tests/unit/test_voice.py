@@ -26,7 +26,14 @@ def pipeline():
     vp._audio_t0_ms, vp._gen = 0, 1
     vp.sync_decisions = True
     submitted = []
-    e.submit = submitted.append
+
+    def submit(req):  # record AND apply, so later turns see the new state
+        submitted.append(req)
+        if req.target_person_id and req.action == RequestAction.PROTECT:
+            e.registry.protect(req.target_person_id, 0, "VOICE")
+        elif req.target_person_id and req.action == RequestAction.UNPROTECT:
+            e.registry.unprotect(req.target_person_id, 0, "VOICE")
+    e.submit = submit
     return vp, submitted
 
 
@@ -51,6 +58,8 @@ def test_partial_refusal_acts_early_once_and_final_does_not_repeat():
 
 def test_partial_consent_never_acts_early():
     vp, sub = pipeline()
+    pid = next(iter(vp.session.engine.registry.persons))
+    vp.session.engine.registry.protect(pid, 0, "GESTURE")      # only a blurred person can unblur
     asyncio.run(vp._on_turn(("partial", "1", 600, 1500, "unblur me")))
     assert sub == []
     asyncio.run(vp._on_turn(("final", "1", 600, 1700, "unblur me")))
@@ -66,8 +75,8 @@ def test_turn_ids_do_not_collide_after_reconnect():
     vp, sub = pipeline()
     asyncio.run(vp._on_turn(("final", "0", 600, 1700, "please blur me")))
     vp._gen += 1
-    asyncio.run(vp._on_turn(("final", "0", 600, 1700, "please blur me")))
-    assert len(sub) == 2
+    asyncio.run(vp._on_turn(("final", "0", 600, 1700, "unblur me")))   # same Muse id, new stream
+    assert [r.action for r in sub] == [RequestAction.PROTECT, RequestAction.UNPROTECT]
 
 
 def test_reconnect_drops_stale_audio_and_reanchors_clock():
@@ -77,3 +86,10 @@ def test_reconnect_drops_stale_audio_and_reanchors_clock():
     vp.session.now_ms = lambda: 9000
     vp.on_connected()
     assert vp._audio.empty() and vp._audio_t0_ms == 9000 and vp.dropped_chunks == 5
+
+
+def test_unblur_from_someone_not_blurred_is_a_no_op():
+    vp, sub = pipeline()
+    r = vp.handle_turn(__import__("shared.contracts", fromlist=["SpeechTurn"]).SpeechTurn(
+        "s_test", "t_x", 600, 1700, "unblur me", True))
+    assert sub == [] and r["outcome"] == "not_blurred"

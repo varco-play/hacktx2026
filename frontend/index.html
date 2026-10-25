@@ -71,6 +71,12 @@
   .face .hold { position:absolute; left:0; right:0; bottom:-6px; height:2px; background:rgba(255,255,255,.12); border-radius:2px; overflow:hidden; opacity:0; transition:opacity .2s; }
   .face .hold span { display:block; height:100%; width:0; background:var(--c); transition:width .12s linear; }
   .face .hold.on { opacity:1; }
+  .bodyx { position:absolute; left:0; top:0; border:1px dashed var(--c); border-radius:14px; opacity:.32; --c:rgba(231,233,236,.55);
+           transition:transform .12s linear, width .12s linear, height .12s linear, opacity .3s var(--ease), border-color .3s; }
+  .bodyx.p { --c:var(--blurred); opacity:.45; } .bodyx.out { opacity:0; }
+  .mic { display:inline-flex; align-items:flex-end; gap:2px; height:11px; margin-left:2px; }
+  .mic i { width:2px; border-radius:1px; background:var(--faint); height:2px; transition:height .1s linear, background .2s; }
+  .chip.on .mic i.lit { background:var(--visible); }
   .idle { position:absolute; inset:0; display:grid; place-items:center; text-align:center; color:var(--muted); }
   .idle b { display:block; color:var(--text); font-weight:500; font-size:15px; margin-bottom:4px; }
   .scan { position:absolute; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
@@ -188,7 +194,7 @@
     <span class="chip" id="cSrc"><span class="dot"></span><span>No session</span></span>
     <span class="chip" id="cOut"><span class="dot"></span><span>Output —</span></span>
     <span class="chip" id="cRec"><span class="dot"></span><span>Not recording</span></span>
-    <span class="chip" id="cVoice" title="Voice commands (transcripts are never shown or stored)"><span class="dot"></span><span>Voice —</span></span>
+    <span class="chip" id="cVoice" title="Voice commands (transcripts are never shown or stored)"><span class="dot"></span><span class="mic" id="mic"><i></i><i></i><i></i><i></i></span><span>Voice —</span></span>
   </div>
   <div class="spacer"></div>
   <span class="sub">Camera stands in for Meta glasses · processing on this Mac</span>
@@ -343,7 +349,6 @@ function confirmEvents(events) {
     const how = label(e.details && e.details.gesture) || (e.source || "").toLowerCase().replace("_", " ");
     if (e.type === "PRIVACY_ACTIVATED") { chime(true); flash("flash-blur"); toast(`${e.person_id} blurred · ${how}`, "var(--blurred)"); }
     if (e.type === "PRIVACY_RELEASED") { chime(false); flash("flash-visible"); toast(`${e.person_id} visible · ${how}`, "var(--visible)"); }
-    if (e.type === "REQUEST_UNRESOLVED") toast("Couldn't tell who spoke — face the camera and repeat", "var(--info)");
     if (e.type === "CAMERA_DISCONNECTED") toast("Camera disconnected — waiting for the same device", "var(--rec)");
     if (e.type === "THERMAL_THROTTLE") toast("Mac is warm — switched to Eco", "var(--blurred)");
   }
@@ -407,7 +412,20 @@ function render() {
   $("hudB").innerHTML = active ? `${un(m.processed_fps)} fps<span class="sep"></span>${un(m.e2e_ms_p50, " ms")}<span class="sep"></span>${esc((m.profile || "").toLowerCase())}` : "";
   if (m.profile_chosen) setSeg(m.profile_chosen);
 
-  // voice status (never transcripts)
+  // voice status (never transcripts): state, live mic level, and a notice for every command
+  // that was heard but NOT applied — so it never looks like "it didn't hear us"
+  const vv = st.voice || {}, lvl = vv.mic_level || 0;
+  [...$("mic").children].forEach((bar, i) => { bar.style.height = `${2 + Math.min(9, lvl * 9 * (0.6 + i * 0.25))}px`; bar.classList.toggle("lit", lvl > 0.05 * (i + 1)); });
+  for (const r of vv.recent || []) {
+    if (seenTurns.has(r.turn_id)) continue; seenTurns.add(r.turn_id);
+    if (!turnsPrimed) continue;
+    const who = r.target ? r.target.replace("person_", "#") : "";
+    const msg = { unclear_speaker: "Heard a privacy request but couldn't tell who said it — face the camera and repeat",
+                  not_blurred: `Heard “unblur” — ${who || "that person"} isn't blurred`,
+                  already_blurred: `${who} is already blurred`, not_applied: "Heard a request — not applied" }[r.outcome];
+    if (msg) toast(msg, "var(--info)");
+  }
+  turnsPrimed = true;
   const vs = (st.voice || health.voice || {}).state || "OFF";
   chip($("cVoice"), vs === "LIVE" ? "Voice commands on" : vs === "DISABLED" ? "Voice off" : vs === "OFF" ? "Voice —" : "Voice unavailable",
        vs === "LIVE" ? "on" : vs === "DEGRADED" || vs === "UNAVAILABLE" ? "warn" : "");
@@ -483,7 +501,7 @@ function render() {
 }
 
 /* face overlay: one element per track, moved with transforms (smooth, no re-creation) */
-const faceGone = new Map(), firstSeen = new Map();
+const faceGone = new Map(), firstSeen = new Map(), seenTurns = new Set(); let turnsPrimed = false;
 function renderFaces(tracks, persons, active) {
   const box = $("faces"), seen = new Set();
   const res = (st.source_capabilities || {}).output_resolution || [640, 480];
@@ -508,6 +526,15 @@ function renderFaces(tracks, persons, active) {
     const g = t.gesture || {}, hold = prot ? [g.peace_s, 1] : g.eyes_closed_s != null ? [g.eyes_closed_s, 2] : [g.cover_s, 1.5];
     const hb = el.querySelector(".hold"), pr = hold[0] == null ? 0 : Math.min(1, hold[0] / hold[1]);
     hb.classList.toggle("on", pr > 0); hb.firstElementChild.style.width = `${pr * 100}%`;
+    if (t.body) {  // the body this face belongs to: whose hands count for this person's gestures
+      const bk = "b:" + key; seen.add(bk);
+      let be = box.querySelector(`[data-k="${CSS.escape(bk)}"]`);
+      if (!be) { be = document.createElement("div"); be.dataset.k = bk; box.insertBefore(be, box.firstChild); }
+      be.className = "bodyx " + (kind === "p" ? "p" : "");
+      const [bx, by, bw, bh] = t.body;
+      be.style.width = `${bw * sx}px`; be.style.height = `${bh * sy}px`;
+      be.style.transform = `translate(${bx * sx}px, ${by * sy}px)`;
+    }
   }
   for (const el of [...box.children]) {
     if (seen.has(el.dataset.k)) { faceGone.delete(el.dataset.k); el.classList.remove("out"); continue; }

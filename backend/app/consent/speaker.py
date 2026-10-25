@@ -26,6 +26,8 @@ MIN_SAMPLES = 6
 # lip-only fallback
 MIN_ACTIVITY = 0.012
 MIN_RATIO = 2.0
+STRICT_RATIO = 2.6     # "unblur me" needs clearer evidence than "blur me" (a false unblur exposes someone)
+AV_DISAGREE = 0.15     # runner-up's lips follow the voice this much better -> don't guess
 # audio-visual sync
 AV_MIN_CORR = 0.30       # top person's lips must follow the voice at least this well
 AV_MARGIN = 0.15         # ...and clearly better than anyone else
@@ -78,9 +80,13 @@ def noise_floor(pid: str, history, audio_env) -> float:
     return max(FLOOR_ABS, FLOOR_MULT * lip_activity(samples[-150:]))
 
 
-def match_speaker(turn: SpeechTurn, visibility_history, audio_env: Optional[list] = None) -> SpeakerMatch:
+def match_speaker(turn: SpeechTurn, visibility_history, audio_env: Optional[list] = None,
+                  strict: bool = False, agree_env: Optional[list] = None) -> SpeakerMatch:
     """visibility_history: iterable of (t_ms, person_ids[, {person_id: lip_openness}]).
-    audio_env: optional [(t_ms, mic_rms)] on the same session clock."""
+    audio_env: optional [(t_ms, mic_rms)] -> pure audio-visual-sync mode (experimental).
+    strict: require a larger lip-motion margin (used for "unblur me").
+    agree_env: mic envelope used only to calibrate per-person lip noise and to veto a pick
+    when lips and voice disagree (default mode)."""
     history = list(visibility_history)
     lo, hi = turn.start_ms - PAD_MS, turn.end_ms + PAD_MS
     window = [row for row in history if lo <= row[0] <= hi]
@@ -131,10 +137,30 @@ def match_speaker(turn: SpeechTurn, visibility_history, audio_env: Optional[list
             return SpeakerMatch(turn.turn_id, None, "single_candidate", round(lip_activity(samples), 4),
                                 0.0, "OFFSCREEN")
         return SpeakerMatch(turn.turn_id, pid, "single_candidate", frac, frac, "MATCHED")
-    scores = sorted(((lip_activity([o for _, o in series.get(pid, [])]), pid) for pid in present), reverse=True)
-    top, top_pid = scores[0]
-    runner = scores[1][0]
-    if top >= MIN_ACTIVITY and top >= MIN_RATIO * max(runner, 1e-6):
+    # 2+ people: whose lips moved MOST relative to their own normal jitter (someone who always
+    # fidgets their mouth doesn't win), by a clear ratio — stricter for "unblur" than "blur".
+    acts = {pid: lip_activity([o for _, o in series.get(pid, [])]) for pid in present}
+    floors = {pid: (noise_floor(pid, history, agree_env) if agree_env else MIN_ACTIVITY) for pid in present}
+    rel = {pid: acts[pid] / max(floors[pid], MIN_ACTIVITY * 0.5) for pid in present}
+    ranked = sorted(present, key=lambda p: rel[p], reverse=True)
+    top_pid, run_pid = ranked[0], ranked[1]
+    top, runner = acts[top_pid], acts[run_pid]
+    ratio = STRICT_RATIO if strict else MIN_RATIO
+    if top >= MIN_ACTIVITY and rel[top_pid] >= ratio * max(rel[run_pid], 1e-6):
+        env = [(t, v) for t, v in (agree_env or []) if lo - 300 <= t <= hi + 300]
+        if len(env) >= 10:
+            # cross-check with the voice: if the runner-up's lips follow the voice clearly
+            # better than the winner's, the two signals disagree -> don't guess
+            env_t = np.array([t for t, _ in env], dtype=np.float64)
+            env_v = np.array([v for _, v in env], dtype=np.float64)
+            c = {}
+            for pid in (top_pid, run_pid):
+                s = series.get(pid, [])
+                c[pid] = _corr(np.array([t for t, _ in s], dtype=np.float64),
+                               np.array([o for _, o in s], dtype=np.float64), env_t, env_v) if len(s) >= MIN_SAMPLES else 0.0
+            if c[run_pid] > c[top_pid] + AV_DISAGREE:
+                return SpeakerMatch(turn.turn_id, None, "lips_vs_voice_disagree", round(top, 4),
+                                    round(c[top_pid] - c[run_pid], 3), "AMBIGUOUS")
         return SpeakerMatch(turn.turn_id, top_pid, "lip_motion_heuristic", round(top, 4),
                             round(top - runner, 4), "MATCHED")
     return SpeakerMatch(turn.turn_id, None, "lip_motion_heuristic", round(top, 4),

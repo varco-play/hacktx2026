@@ -92,14 +92,14 @@ def test_unverified_allow_never_unblurs():
     res, n = run(e, s, 3, n)
     assert res.tracks[0]["shielded"] and e.registry.get(a).protected
 
-def test_unverified_protect_does_not_target_random_person_but_shields_briefly():
+def test_unverified_protect_does_not_target_or_blur_anyone():
     s, e = make()
     s.frame = [face("A", 100, 100), face("B", 400, 100)]
     res, n = run(e, s, 12, 1)
     protect(e, None, eid="u1", origin=RequestOrigin.VOICE, action=RequestAction.UNRESOLVED, verified=False)
     res = e.step(packet(n))
     assert not e.registry.any_protected()
-    assert all(t["shielded"] for t in res.tracks)  # temporary unresolved shield
+    assert not any(t["shielded"] for t in res.tracks)  # unclear speaker: nobody blurred (live feedback)
     assert any(ev["type"] == "REQUEST_UNRESOLVED" for ev in res.events)
 
 def test_duplicate_event_ids_ignored():
@@ -224,7 +224,8 @@ def test_peace_sign_unblurs_only_its_owner():
     for pid in (a, b):
         e.submit(PrivacyRequest("s_test", "p" + pid, RequestOrigin.MANUAL_TEST, None, pid, RequestAction.PROTECT, 0, True))
     res, n = run(e, s, 2, n)
-    s.sig = {"faces": [], "hands": [hand(470, 280, peace=True)]}   # B's hand, next to B's face
+    s.sig = {"faces": [], "hands": [hand(470, 280, peace=True)],    # B's hand, next to B's face
+             "heads": [body_of(100, 100), body_of(400, 100, wrist=(460, 270))]}
     res, n = run(e, s, 17, n)                    # ~1.1 s
     assert not e.registry.get(b).protected, "B's own peace sign should unblur B"
     assert e.registry.get(a).protected, "B's peace sign must never unblur A"
@@ -509,7 +510,8 @@ def test_strict_mode_blurs_everyone_until_peace_sign_opt_in():
     a, b, n = two_people(s, e)
     r = e.step(packet(n))
     assert all(t["shielded"] for t in r.tracks)
-    s.sig = {"faces": [], "hands": [hand(170, 280, peace=True)], "heads": []}
+    s.sig = {"faces": [], "hands": [hand(170, 280, peace=True)],
+             "heads": [body_of(100, 100, wrist=(160, 270)), body_of(400, 100)]}
     res, n = run(e, s, 20, n + 1)
     assert not next(t for t in res.tracks if t["person_id"] == a)["shielded"]
     assert next(t for t in res.tracks if t["person_id"] == b)["shielded"]
@@ -559,3 +561,65 @@ def test_returning_protected_person_cannot_inherit_a_bystanders_spot():
     for i in range(n, n + 10):
         pkt = packet(i); r = e.step(pkt)
         assert region_changed(pkt.bgr, r.protected_bgr, 405, 104), f"A visible at frame {i - n}"
+
+
+
+def body_of(x, y, size=100, wrist=None):
+    """Fake pose body for a face at (x, y): nose inside the face box, optional wrist position."""
+    return {"box": (x - 5, y - 5, size + 10, size + 15), "body": (x - 40, y - 10, size + 80, 300),
+            "nose": (x + size / 2, y + size / 2), "wrists": [wrist] if wrist else [], "shoulder_w": 120.0}
+
+def test_someone_elses_peace_sign_next_to_your_face_never_unblurs_you():
+    """Live bug: A held a peace sign beside B's (blurred) face and B got unblurred."""
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pb", RequestOrigin.MANUAL_TEST, None, b, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    # A's hand is right next to B's face, but its wrist belongs to A's body (A's arm reaches over)
+    s.sig = {"faces": [], "hands": [hand(380, 230, peace=True)],
+             "heads": [body_of(100, 100, wrist=(372, 222)), body_of(400, 100, wrist=(560, 400))]}
+    res, n = run(e, s, 30, n)
+    assert e.registry.get(b).protected, "A's peace sign must not unblur B"
+
+def test_peace_sign_without_body_link_is_ignored_when_two_people_are_present():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pb", RequestOrigin.MANUAL_TEST, None, b, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    s.sig = {"faces": [], "hands": [hand(470, 280, peace=True)], "heads": []}   # pose unavailable
+    res, n = run(e, s, 30, n)
+    assert e.registry.get(b).protected
+
+def test_peace_sign_works_alone_without_pose():
+    s, e = make_sig()
+    s.frame = [face("A", 100, 100)]
+    res, n = run(e, s, 12, 1)
+    a = pid_of(res, 100)
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    s.sig = {"faces": [], "hands": [hand(170, 280, peace=True)], "heads": []}
+    res, n = run(e, s, 20, n)
+    assert not e.registry.get(a).protected
+
+
+def test_unblur_needs_clearer_speaker_evidence_than_blur():
+    import math
+    # A's lips move ~2.2x more than B's: enough to attribute "blur me", not "unblur me"
+    a = lambda t: 0.03 + 0.022 * abs(math.sin(t / 60.0))
+    b = lambda t: 0.03 + 0.010 * abs(math.sin(t / 60.0 + 1))
+    hist = [(t * 66, ("person_001", "person_002"), {"person_001": a(t * 66), "person_002": b(t * 66)}) for t in range(30)]
+    turn = SpeechTurn("s_test", "t1", 300, 1500, "x", True)
+    assert match_speaker(turn, hist).person_id == "person_001"
+    assert match_speaker(turn, hist, strict=True).person_id is None
+
+def test_lips_vs_voice_disagreement_targets_nobody():
+    import math
+    voice = lambda t: 800 * max(0.0, math.sin(t / 90.0)) if 0 <= t <= 1500 else 20.0
+    laugher = lambda t: 0.03 + 0.09 * abs(math.sin(t / 37.0 + 1.0))   # big lip motion, wrong rhythm
+    talker = lambda t: 0.03 + 0.00004 * voice(t)                        # smaller motion, follows the voice
+    hist = [(t * 33, ("person_001", "person_002"), {"person_001": laugher(t * 33), "person_002": talker(t * 33)})
+            for t in range(-150, 70)]
+    env = [(t, voice(t)) for t in range(-5000, 2400, 20)]
+    turn = SpeechTurn("s_test", "t1", 0, 1500, "x", True)
+    m = match_speaker(turn, hist, agree_env=env)
+    assert m.person_id is None and m.status == "AMBIGUOUS"

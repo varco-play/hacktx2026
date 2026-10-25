@@ -45,7 +45,7 @@ class EngineConfig:
     coast_ms: int = 1200         # keep a lost box (shielded if protected/pending) this long
     continuity_ms: int = 3000    # a face reappearing where a known person was lost <3 s ago is them
     pending_timeout: int = 90
-    unresolved_shield_ms: int = 3000
+    unresolved_shield_ms: int = 0   # unclear speaker: change nobody (was 3 s blur-everyone)
     # gestures
     eyes_closed_thr: float = 0.50  # both eyes (live-tested MVP value)
     look_down_veto: float = 1.01   # disabled (was 0.55); kept configurable
@@ -126,6 +126,7 @@ class VisionEngine:
         self.tracks: list[Track] = []
         self.gestures: dict[str, GestureState] = {}
         self.mouth_now: dict = {}
+        self.bodies_now: dict = {}  # person_id -> pose body box (UI: whose hands are whose)
         self._tid = itertools.count(1)
         self._eid = itertools.count(1)
         self._requests: "queue.Queue[PrivacyRequest]" = queue.Queue()
@@ -513,7 +514,48 @@ class VisionEngine:
         self.mouth_now, self._eyes_now, self._look_down_now = mouths, eyes, look
         return mouths
 
-    def _hand_owner(self, hand: dict, cands: list) -> Optional[Track]:
+    def _body_of(self, track: Track, bodies: list) -> Optional[dict]:
+        """The pose body whose nose/head sits inside this face's box (one body per face)."""
+        x, y, w, h = track.box
+        best, best_d = None, None
+        for b in bodies:
+            p = b.get("nose") or _center(b["box"])
+            if x - 0.25 * w <= p[0] <= x + 1.25 * w and y - 0.25 * h <= p[1] <= y + 1.25 * h:
+                d = _center_dist(track.box, (p[0], p[1], 0, 0))
+                if best_d is None or d < best_d:
+                    best, best_d = b, d
+        return best
+
+    def _hand_owner_by_body(self, hand: dict, cands: list, bodies: list) -> Optional[Track]:
+        """Whose hand is this? Follow it to a body: the hand's wrist must sit on one body's pose
+        wrist, and that body's head must be a tracked face. A hand held next to someone ELSE's
+        face therefore belongs to its own body, not to the nearest face."""
+        wx, wy = hand["pts"][0]
+        palm = float(np.linalg.norm(hand["pts"][9] - hand["pts"][0])) or 20.0
+        owner_body, best = None, None
+        for b in bodies:
+            for px, py in b.get("wrists", []):
+                d = float(np.hypot(px - wx, py - wy))
+                if d <= 1.6 * palm and (best is None or d < best):
+                    owner_body, best = b, d
+        if owner_body is None:
+            return None
+        for t in cands:
+            if self._body_of(t, bodies) is owner_body:
+                return t
+        return None
+
+    def _hand_owner(self, hand: dict, cands: list, bodies: Optional[list] = None) -> Optional[Track]:
+        """Body-based ownership when pose is available. Without pose: only if ONE person is in
+        view (nobody else's hand to confuse) — never "nearest face" with two people."""
+        if bodies:
+            return self._hand_owner_by_body(hand, cands, bodies)
+        live = [t for t in cands if t.missed == 0]
+        if len(live) != 1:
+            return None
+        return self._nearest_face_owner(hand, live)
+
+    def _nearest_face_owner(self, hand: dict, cands: list) -> Optional[Track]:
         """Nearest identified face to the palm, only if clearly nearer than any other face."""
         scored = []
         for t in cands:
@@ -548,13 +590,19 @@ class VisionEngine:
         cfg = self.cfg
         now = pkt.t_ms
         cands = [t for t in self.tracks if t.person_id]
+        bodies = [b for b in sig.get("heads", []) if "wrists" in b]  # pose bodies (whose hand is whose)
+        self.bodies_now = {}
+        for t in cands:
+            b = self._body_of(t, bodies)
+            if b is not None and b.get("body"):
+                self.bodies_now[t.person_id] = b["body"]
         peace_owner = set()
         for hd in sig["hands"]:
             # a hand resting on any face (touching, scratching) is never a consent sign
             on_face = any(t.box[0] <= hd["c"][0] <= t.box[0] + t.box[2] and t.box[1] <= hd["c"][1] <= t.box[1] + t.box[3]
                           for t in self.tracks)
             if hd["peace"] and not on_face:
-                owner = self._hand_owner(hd, cands)
+                owner = self._hand_owner(hd, cands, bodies)
                 if owner is not None:
                     peace_owner.add(owner.person_id)
         eyes_now = getattr(self, "_eyes_now", {})
@@ -657,6 +705,7 @@ class VisionEngine:
                 "head_only": t.head_only,
                 "box": [round(v) for v in t.box],
                 "mouth_open": round(self.mouth_now[t.person_id], 3) if t.person_id in self.mouth_now else None,
+                "body": [round(v) for v in self.bodies_now[t.person_id]] if t.person_id in self.bodies_now else None,
                 "gesture": None if g is None else {
                     "eyes_closed_s": held(g.eyes_since), "cover_s": held(g.cover_since),
                     "peace_s": held(g.peace_since)},

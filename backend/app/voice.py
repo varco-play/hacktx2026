@@ -192,6 +192,23 @@ class VoicePipeline:
             if r.get("turn_id") == turn_id:
                 r["final_text"] = text
 
+    def _outcome(self, intent: str, match, req) -> str:
+        """Plain-language result for the UI (never the words that were said). A command that
+        doesn't fit the matched speaker's state is a no-op: "unblur me" from someone who isn't
+        blurred, or "blur me" from someone already blurred."""
+        if intent not in ("DENY", "ALLOW"):
+            return "no_request"
+        if req is None or req.target_person_id is None:
+            return "unclear_speaker" if match.status in ("AMBIGUOUS", "OFFSCREEN", "UNKNOWN") else "not_applied"
+        p = self.session.engine.registry.get(req.target_person_id)
+        if p is None:
+            return "not_applied"
+        if intent == "ALLOW" and not p.protected:
+            return "not_blurred"
+        if intent == "DENY" and p.protected:
+            return "already_blurred"
+        return "unblur" if intent == "ALLOW" else "blur"
+
     def handle_turn(self, turn: SpeechTurn, parsed=None, early: bool = False) -> dict:
         t0 = time.monotonic()
         if parsed is None:
@@ -209,10 +226,14 @@ class VoicePipeline:
         # Live-tested MVP binding: lip motion (+ single visible person). The audio-visual sync
         # variant (SPEAKER_AV=on) is experimental — it missed real "unblur me" turns on a laptop mic.
         env = self.audio_envelope() if os.getenv("SPEAKER_AV", "off").lower() in ("1", "on", "true") else None
-        match = match_speaker(turn, self.session.engine.visibility_history(), env)
+        match = match_speaker(turn, self.session.engine.visibility_history(), env,
+                              strict=parsed.intent.value == "ALLOW",      # unblur needs clearer evidence
+                              agree_env=self.audio_envelope())           # lips-vs-voice veto
         req = resolve_request(turn, parsed, match, self.session.session_id, f"voice_{turn.turn_id}")
-        if req is not None:
+        outcome = self._outcome(parsed.intent.value, match, req)
+        if req is not None and outcome not in ("not_blurred", "already_blurred"):
             self.session.engine.submit(req)
+        record.update(outcome=outcome)
         record.update(intent=parsed.intent.value, speaker_ref=parsed.speaker_ref.value,
                       source=parsed.source, speaker_method=match.method, speaker_status=match.status,
                       speaker_score=match.evidence_score, speaker_margin=match.runner_up_margin,
