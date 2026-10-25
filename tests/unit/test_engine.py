@@ -336,7 +336,7 @@ def test_stalled_landmarker_never_blocks_the_frame_loop_and_restarts():
         last_ts = -1
 
     orig_detect, orig_lm = L.Signals._detect, L._Landmarkers
-    def detect(lm, bgr, t, do_hands):
+    def detect(lm, bgr, t, do_hands, do_pose=None):
         calls["n"] += 1
         if calls["n"] == 2:
             gate.wait(10)  # simulate MediaPipe hanging on the 2nd frame
@@ -623,3 +623,57 @@ def test_lips_vs_voice_disagreement_targets_nobody():
     turn = SpeechTurn("s_test", "t1", 0, 1500, "x", True)
     m = match_speaker(turn, hist, agree_env=env)
     assert m.person_id is None and m.status == "AMBIGUOUS"
+
+
+def test_speech_window_comes_from_mic_loudness_not_drifting_stt_times():
+    from backend.app.consent.speaker import speech_window
+    # real speech 2000-3200 ms on the session clock; STT reports it 600 ms early (stream drift)
+    env = [(t, 900.0 if 2000 <= t <= 3200 else 40.0) for t in range(0, 6000, 20)]
+    turn = SpeechTurn("s_test", "t1", 1400, 2600, "x", True)
+    lo, hi = speech_window(turn, env)
+    assert abs(lo - 2000) <= 40 and abs(hi - 3200) <= 40
+    assert speech_window(turn, [(t, 40.0) for t in range(0, 6000, 20)]) is None   # silence: can't tell
+
+def test_lip_window_uses_mic_timing_to_pick_the_real_speaker():
+    import math
+    # A talks 2000-3200 (mic loud then); B talks 1000-2000. STT says 1400-2600 (drifted).
+    a = lambda t: 0.03 + (0.03 * abs(math.sin(t / 50.0)) if 2000 <= t <= 3200 else 0.0)
+    b = lambda t: 0.03 + (0.03 * abs(math.sin(t / 50.0)) if 1000 <= t <= 2000 else 0.0)
+    hist = [(t, ("person_001", "person_002"), {"person_001": a(t), "person_002": b(t)}) for t in range(0, 6000, 50)]
+    env = [(t, 900.0 if 2000 <= t <= 3200 else 40.0) for t in range(-20000, 6000, 20)]
+    dbg = {}
+    m = match_speaker(SpeechTurn("s_test", "t1", 1400, 2600, "x", True), hist, agree_env=env, debug=dbg)
+    assert m.person_id == "person_001" and dbg["window_source"] == "mic_loudness"
+
+
+def test_unclear_voice_unblur_confirmed_by_a_quick_own_peace_sign():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    for pid in (a, b):
+        e.submit(PrivacyRequest("s_test", "p" + pid, RequestOrigin.MANUAL_TEST, None, pid, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    e.request_confirmation("ALLOW", packet(n).t_ms)
+    s.sig = {"faces": [], "hands": [hand(470, 280, peace=True)],
+             "heads": [body_of(100, 100), body_of(400, 100, wrist=(460, 270))]}
+    res, n = run(e, s, 6, n)                      # ~0.4 s: enough only because confirmation is open
+    assert not e.registry.get(b).protected and e.registry.get(a).protected
+    assert e.confirm is None
+
+def test_quick_peace_without_confirmation_does_not_unblur():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pb", RequestOrigin.MANUAL_TEST, None, b, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 2, n)
+    s.sig = {"faces": [], "hands": [hand(470, 280, peace=True)],
+             "heads": [body_of(100, 100), body_of(400, 100, wrist=(460, 270))]}
+    res, n = run(e, s, 6, n)
+    assert e.registry.get(b).protected
+
+def test_unclear_voice_blur_confirmed_by_quick_eye_cover():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.request_confirmation("DENY", packet(n).t_ms)
+    s.frame = [face("B", 400, 100)]
+    s.sig = {"faces": [face_sig(400, 100)], "hands": [hand_over_eyes(100, 100)], "heads": []}
+    res, n = run(e, s, 10, n)                     # ~0.66 s
+    assert e.registry.get(a).protected and not e.registry.get(b).protected

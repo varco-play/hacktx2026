@@ -26,7 +26,10 @@ _DENY = [
     r"\b(not|aint|ain't)\s+(trying|tryna)\s+(to\s+)?be\s+(on\s+camera|in\s+(the|this|your)\s+(video|clip|shot))\b",
     r"\b(get|take|keep)\s+me\s+out\s+of\s+(the|this|your)\s+(video|shot|frame|recording|clip)\b",
     r"\b(hide|cover)\s+(my\s+face|my\s+identity|me)\b",
-    r"\bkeep\s+me\s+blurred\b",
+    r"\bkeep\s+(me|us)\s+blurred\b",
+    r"(?<!\bun )(?<!\bon )\bblur\s+(us|both\s+of\s+us)\b",
+    rf"\b{_NOT}\s+{_VERB}\s+(us|both\s+of\s+us)\b",
+    r"\bwe\s+(do\s*n[o']?t|do\s+not|dont)\s+want\s+to\s+be\s+(recorded|filmed|shown|on\s+camera|in\s+(the|this|your)\s+video)\b",
     r"\bi\s+(do\s*n[o']?t|do\s+not|dont)\s+consent\b",
     r"\bi\s+(do\s*n[o']?t|do\s+not|dont)\s+(give|grant)\s+(you\s+)?(my\s+)?(consent|permission)\b",
 ]
@@ -39,6 +42,13 @@ _ALLOW = [
     rf"\b{_PERMIT}\s+(record|film){_TAIL}",                         # "yeah you can record." (nothing after)
     rf"^\W*(yeah|yes|yep|yup|sure|ok|okay|alright|bet|aight)?\W*(record|film)\s+me\b",   # "yeah, record me"
     r"\bshow\s+my\s+face\b",
+    # "we/us" phrasing includes the speaker -> consent for the SPEAKER's own face only
+    r"\b(we'?re|we\s+are|i'?m|im|i\s+am)\s+(totally\s+|completely\s+|all\s+)?(ok|okay|fine|good|cool|down|alright)\s+"
+    r"((to|with)\s+)?(being\s+|getting\s+|be\s+)?(recorded|filmed|shown|on\s+camera|in\s+(the|this|your)\s+video)\b",
+    rf"\b{_PERMIT}\s+{_VERB}\s+(us|both\s+of\s+us)\b",
+    r"\b(un[\s-]?blur|on\s+blur)\s+(us|both\s+of\s+us)\b",
+    r"\b(we|i)\s+(give|grant)\s+(you\s+)?(our|my)?\s*(consent|permission)\b",
+    r"\byou\s+have\s+(our|my)\s+(consent|permission)\b",
     r"\bi\s+(now\s+)?consent\b",
     r"\bi\s+(give|grant)\s+(you\s+)?(my\s+)?(consent|permission)\b",
     r"\byou\s+have\s+my\s+(consent|permission)\b",

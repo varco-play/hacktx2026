@@ -104,3 +104,20 @@ def test_rules_fast_path_allow_self(text):
 def test_negated_unblur_is_deny():
     assert local_rules.interpret(turn("please don't unblur me")).intent == Intent.DENY
     assert local_rules.interpret(turn("I don't consent")).intent == Intent.DENY
+
+
+@pytest.mark.parametrize("text", ["we are okay to being recorded", "We're fine with being filmed", "you can record us",
+                                  "I'm okay to be recorded", "we give you our consent", "I'm cool with being on camera",
+                                  "unblur us"])
+def test_we_us_consent_counts_for_the_speaker(text):
+    r = local_rules.interpret(turn(text))
+    assert r is not None and r.intent == Intent.ALLOW and r.speaker_ref == SpeakerRef.SELF, text
+
+@pytest.mark.parametrize("text", ["blur us", "don't record us", "we don't want to be recorded"])
+def test_we_us_refusal(text):
+    r = local_rules.interpret(turn(text))
+    assert r is not None and r.intent == Intent.DENY, text
+
+@pytest.mark.parametrize("text", ["they are okay being recorded", "my friend is fine being filmed"])
+def test_third_person_consent_never_fast_paths(text):
+    assert local_rules.interpret(turn(text)) is None

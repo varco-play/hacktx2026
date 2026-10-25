@@ -22,7 +22,8 @@ SYSTEM = (
     "identify whether the speaker explicitly requests their own face not appear in the video (DENY), "
     "explicitly expresses willingness for their own face to appear (ALLOW), says something unrelated "
     "(NO_REQUEST), or is ambiguous (UNCLEAR). Determine whether the request concerns SELF, OTHER, or "
-    "UNKNOWN. Do not infer consent from silence, past acquaintance, or a third-party report. Pay close "
+    "UNKNOWN. A statement with 'we' or 'us' that includes the speaker (e.g. 'we're okay being recorded') "
+    "counts as SELF. Casual or slang phrasing counts if the meaning is clear. Do not infer consent from silence, past acquaintance, or a third-party report. Pay close "
     "attention to negation and sarcasm; mark doubtful phrases UNCLEAR. Never choose a face or return a "
     "person ID. Return only JSON satisfying the schema."
 )

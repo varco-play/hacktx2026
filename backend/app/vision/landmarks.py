@@ -133,10 +133,15 @@ class Signals:
     def _start_worker(self) -> None:
         self._pool = self._Executor(max_workers=1, thread_name_prefix="landmarks")
 
-    def __call__(self, bgr: np.ndarray, t_ms: int) -> dict:
+    supports_heavy = True  # engine may ask for face-only frames
+
+    def __call__(self, bgr: np.ndarray, t_ms: int, heavy: bool = True) -> dict:
+        """Face landmarks (lips, eyes) on EVERY call — they are the cheap part and lip timing
+        needs density for "who spoke". Hands/pose (heavier) only when heavy=True, alternating."""
         import time as _t
         from concurrent.futures import TimeoutError as _Timeout
         now = _t.monotonic()
+        cached = {"faces": [], "hands": self._last_hands, "heads": self._last_heads, "stalled": True}
         if self._pending is not None and not self._pending.done():
             if (now - self._pending_since) * 1000 > self.restart_ms:
                 self._pool.shutdown(wait=False, cancel_futures=True)  # abandon the stuck worker
@@ -144,16 +149,19 @@ class Signals:
                 self._lm = self._pool.submit(_Landmarkers, self.models_dir, self.max_faces, self.max_hands).result()
                 self._pending = None
                 self.restarts += 1
-            return {"faces": [], "hands": self._last_hands, "heads": self._last_heads, "stalled": True}
-        self._n += 1
-        do_hands = self._n % self.hands_every == 0  # hands and pose alternate frames (heat budget)
-        fut = self._pool.submit(self._detect, self._lm, bgr, int(t_ms), do_hands)
+            return cached
+        do_hands = do_pose = False
+        if heavy:
+            self._n += 1
+            do_hands = self._n % self.hands_every == 0
+            do_pose = not do_hands
+        fut = self._pool.submit(self._detect, self._lm, bgr, int(t_ms), do_hands, do_pose)
         try:
             faces, hands, heads = fut.result(timeout=self.budget_ms / 1000)
         except _Timeout:
             self.timeouts += 1
             self._pending, self._pending_since = fut, now
-            return {"faces": [], "hands": self._last_hands, "heads": self._last_heads, "stalled": True}
+            return cached
         self._pending = None
         if hands is not None:
             self._last_hands = hands
@@ -162,7 +170,7 @@ class Signals:
         return {"faces": faces, "hands": self._last_hands, "heads": self._last_heads}
 
     @staticmethod
-    def _detect(lm: _Landmarkers, bgr: np.ndarray, t_ms: int, do_hands: bool):
+    def _detect(lm: _Landmarkers, bgr: np.ndarray, t_ms: int, do_hands: bool, do_pose: bool = None):
         ts = max(t_ms, lm.last_ts + 1)  # VIDEO mode needs strictly increasing timestamps
         lm.last_ts = ts
         h, w = bgr.shape[:2]
@@ -181,7 +189,9 @@ class Signals:
                           "eyes_closed": float(min(bs.get("eyeBlinkLeft", 0.0), bs.get("eyeBlinkRight", 0.0))),
                           "look_down": float(min(bs.get("eyeLookDownLeft", 0.0), bs.get("eyeLookDownRight", 0.0)))})
         hands = heads = None
-        if lm.pose is not None and not do_hands:
+        if do_pose is None:
+            do_pose = not do_hands
+        if lm.pose is not None and do_pose:
             heads = []  # one entry per detected BODY (pose): head box, body box, nose, wrists
             for pl in lm.pose.detect_for_video(img, ts).pose_landmarks:
                 pts = np.array([[p.x * w, p.y * h] for p in pl], dtype=np.float32)

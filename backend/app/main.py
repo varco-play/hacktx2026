@@ -245,7 +245,7 @@ def _voice_public() -> dict:
     if vp is None:
         return {"state": "OFF" if settings.voice_enabled else "DISABLED"}
     st = vp.status()
-    keep = ("outcome", "intent", "action", "target", "speaker_status", "speaker_method", "source", "decide_ms",
+    keep = ("outcome", "speaker_debug", "intent", "action", "target", "speaker_status", "speaker_method", "source", "decide_ms",
             "apply_delay_ms", "early_partial", "turn_id")
     last = [{k: t.get(k) for k in keep} for t in st.get("turns", [])][-5:]
     env = vp.audio_envelope()[-10:] if hasattr(vp, "audio_envelope") else []

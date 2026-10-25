@@ -420,7 +420,10 @@ function render() {
     if (seenTurns.has(r.turn_id)) continue; seenTurns.add(r.turn_id);
     if (!turnsPrimed) continue;
     const who = r.target ? r.target.replace("person_", "#") : "";
-    const msg = { unclear_speaker: "Heard a privacy request but couldn't tell who said it — face the camera and repeat",
+    const msg = { confirm_by_gesture: r.intent === "ALLOW"
+                    ? "Heard consent — couldn't tell who. Whoever is consenting: quick peace sign now"
+                    : "Heard a blur request — couldn't tell who. Whoever asked: cover your eyes briefly now",
+                  unclear_speaker: "Heard a privacy request but couldn't tell who said it — face the camera and repeat",
                   not_blurred: `Heard “unblur” — ${who || "that person"} isn't blurred`,
                   already_blurred: `${who} is already blurred`, not_applied: "Heard a request — not applied" }[r.outcome];
     if (msg) toast(msg, "var(--info)");

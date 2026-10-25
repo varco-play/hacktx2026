@@ -252,6 +252,7 @@ class Session:
             "source_capabilities": self.source.capabilities() if hasattr(self.source, "capabilities") else {},
             "camera_connected": self.capture.connected,
             "strict": self.engine.strict,
+            "confirm": (self.engine.confirm or {}).get("intent") if self.engine.confirm and self.now_ms() < self.engine.confirm["until"] else None,
             "t_ms": self.now_ms(),
             "output_state": self.output_state.value,
             "error": self.error,

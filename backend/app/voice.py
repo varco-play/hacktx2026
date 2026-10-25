@@ -83,6 +83,7 @@ class VoicePipeline:
 
         try:
             self._mic = sd.RawInputStream(samplerate=meta_voice.SAMPLE_RATE, channels=1, dtype="int16",
+                                          device=self._pick_mic(sd),
                                           blocksize=meta_voice.SAMPLE_RATE * meta_voice.CHUNK_MS // 1000,
                                           callback=cb)
             self._mic.start()
@@ -91,6 +92,18 @@ class VoicePipeline:
             return
         self._thread = threading.Thread(target=lambda: asyncio.run(self._run()), name="voice", daemon=True)
         self._thread.start()
+
+    def _pick_mic(self, sd):
+        """MIC=<part of a device name> (e.g. MIC=iPhone when the phone is connected by cable and
+        its microphone is closer to the people). Default: system input."""
+        want = os.getenv("MIC", "").strip().lower()
+        if not want:
+            return None
+        for i, d in enumerate(sd.query_devices()):
+            if d["max_input_channels"] > 0 and want in d["name"].lower():
+                self.mic_name = d["name"]
+                return i
+        return None
 
     def _record_envelope(self, pcm: bytes, t_end_ms: int) -> None:
         """Mic loudness every 20 ms on the session clock (for audio-visual speaker sync).
@@ -226,14 +239,21 @@ class VoicePipeline:
         # Live-tested MVP binding: lip motion (+ single visible person). The audio-visual sync
         # variant (SPEAKER_AV=on) is experimental — it missed real "unblur me" turns on a laptop mic.
         env = self.audio_envelope() if os.getenv("SPEAKER_AV", "off").lower() in ("1", "on", "true") else None
+        dbg: dict = {}
         match = match_speaker(turn, self.session.engine.visibility_history(), env,
                               strict=parsed.intent.value == "ALLOW",      # unblur needs clearer evidence
-                              agree_env=self.audio_envelope())           # lips-vs-voice veto
+                              agree_env=self.audio_envelope(),           # timing + lips-vs-voice veto
+                              debug=dbg)
+        record_debug = dbg  # numbers only (window, per-person lip scores) — never words
         req = resolve_request(turn, parsed, match, self.session.session_id, f"voice_{turn.turn_id}")
         outcome = self._outcome(parsed.intent.value, match, req)
+        if outcome == "unclear_speaker":
+            # heard a clear request but not who said it: let the asker confirm with a quick gesture
+            self.session.engine.request_confirmation(parsed.intent.value, self.session.now_ms())
+            outcome = "confirm_by_gesture"
         if req is not None and outcome not in ("not_blurred", "already_blurred"):
             self.session.engine.submit(req)
-        record.update(outcome=outcome)
+        record.update(outcome=outcome, speaker_debug=record_debug)
         record.update(intent=parsed.intent.value, speaker_ref=parsed.speaker_ref.value,
                       source=parsed.source, speaker_method=match.method, speaker_status=match.status,
                       speaker_score=match.evidence_score, speaker_margin=match.runner_up_margin,

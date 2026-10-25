@@ -118,6 +118,7 @@ class VisionEngine:
         self.strict = False         # PRIVACY_DEFAULT=protect: blur everyone until they consent
         self.follow_heads = False   # pose head-following (experimental; can drift onto neighbours)
         self._lost: list = []       # (person_id, last box, last_seen_ms) of recently expired tracks
+        self.confirm: Optional[dict] = None  # {"intent": "ALLOW"|"DENY", "until": t_ms} after an unclear voice turn
         self.signals_every = 1      # quality profile: run landmarks every Nth frame, reuse otherwise
         self._sig_n = 0
         self._sig_last = {"faces": [], "hands": [], "heads": []}
@@ -141,6 +142,13 @@ class VisionEngine:
     def submit(self, req: PrivacyRequest) -> None:
         self._requests.put(req)
 
+    def request_confirmation(self, intent: str, t_ms: int, window_ms: int = 6000) -> None:
+        """A voice request was heard but the speaker couldn't be identified (e.g. both talking).
+        For a few seconds the asking person can confirm with a SHORT gesture of their own:
+        peace sign (0.3 s) for "unblur", eye cover (0.5 s) for "blur". Ownership rules still apply,
+        so a confirmation only ever changes the person who makes it."""
+        self.confirm = {"intent": intent, "until": t_ms + window_ms}
+
     def visibility_history(self) -> list:
         with self._vis_lock:
             return list(self._visibility)
@@ -161,9 +169,11 @@ class VisionEngine:
             dets = self.detect(pkt.bgr)
             self._associate(dets, pkt)
             self._identify(pkt, events)
-            if analyze:
-                sig = self._signals(pkt)
-                if self.follow_heads:
+            if analyze or self._face_every_frame:
+                # face landmarks (lips/eyes) every frame when supported; hands/pose only on
+                # analysis frames — dense lip samples are what make "who spoke" work
+                sig = self._signals(pkt, heavy=analyze)
+                if analyze and self.follow_heads:
                     self._follow_heads(pkt, sig)  # off by default: can drift onto a nearby person
                 mouths = self._map_faces(sig)
                 self._gestures(pkt, sig, events)
@@ -450,7 +460,11 @@ class VisionEngine:
             self.registry.remove(pid)
             self.gestures.pop(pid, None)
 
-    def _signals(self, pkt: FramePacket) -> dict:
+    @property
+    def _face_every_frame(self) -> bool:
+        return bool(getattr(self.signals, "supports_heavy", False))
+
+    def _signals(self, pkt: FramePacket, heavy: bool = True) -> dict:
         """Landmark evidence. Failure = no evidence (never unshields, never blurs)."""
         if self.signals is None:
             return {"faces": [], "hands": [], "heads": []}
@@ -458,7 +472,10 @@ class VisionEngine:
         if self.signals_every > 1 and self._sig_n % self.signals_every:
             return self._sig_last
         try:
-            self._sig_last = self.signals(pkt.bgr, pkt.t_ms)
+            if self._face_every_frame:
+                self._sig_last = self.signals(pkt.bgr, pkt.t_ms, heavy=heavy)
+            else:
+                self._sig_last = self.signals(pkt.bgr, pkt.t_ms)
         except Exception:
             self._sig_last = {"faces": [], "hands": [], "heads": []}
         return self._sig_last
@@ -644,20 +661,30 @@ class VisionEngine:
             if now < g.cooldown_until:
                 continue
             p = self.registry.get(pid)
+            conf = self.confirm if self.confirm and now < self.confirm["until"] else None
+            eyes_hold = 500 if conf and conf["intent"] == "DENY" else cfg.eyes_hold_ms
+            cover_hold = 500 if conf and conf["intent"] == "DENY" else cfg.cover_hold_ms
+            peace_hold = 300 if conf and conf["intent"] == "ALLOW" else cfg.peace_hold_ms
             if not p.protected:
                 which = None
-                if g.eyes_since is not None and now - g.eyes_since >= cfg.eyes_hold_ms:
+                if g.eyes_since is not None and now - g.eyes_since >= eyes_hold:
                     which = "eyes_closed"
-                elif g.cover_since is not None and now - g.cover_since >= cfg.cover_hold_ms:
+                elif g.cover_since is not None and now - g.cover_since >= cover_hold:
                     which = "hands_over_eyes"
                 if which:
-                    self._protect(pkt, pid, "GESTURE", {"gesture": which}, events)
+                    self._protect(pkt, pid, "VOICE+GESTURE" if conf else "GESTURE",
+                                  {"gesture": which, "confirmed_voice": bool(conf)}, events)
                     g.cooldown_until = now + cfg.gesture_cooldown_ms
                     g.eyes_since = g.cover_since = None
-            elif g.peace_since is not None and now - g.peace_since >= cfg.peace_hold_ms:
-                self._unprotect(pkt, pid, "GESTURE", {"gesture": "peace_sign"}, events)
+                    if conf and conf["intent"] == "DENY":
+                        self.confirm = None
+            elif g.peace_since is not None and now - g.peace_since >= peace_hold:
+                self._unprotect(pkt, pid, "VOICE+GESTURE" if conf else "GESTURE",
+                                {"gesture": "peace_sign", "confirmed_voice": bool(conf)}, events)
                 g.cooldown_until = now + cfg.gesture_cooldown_ms
                 g.peace_since = None
+                if conf and conf["intent"] == "ALLOW":
+                    self.confirm = None
             if self.strict and not p.protected and p.privacy != Privacy.VISIBLE_BY_CONSENT \
                     and g.peace_since is not None and now - g.peace_since >= cfg.peace_hold_ms:
                 p.privacy = Privacy.VISIBLE_BY_CONSENT  # strict mode: explicit opt-in to be shown
@@ -720,6 +747,7 @@ class VisionEngine:
                 "box": [round(v) for v in t.box],
                 "mouth_open": round(self.mouth_now[t.person_id], 3) if t.person_id in self.mouth_now else None,
                 "body": [round(v) for v in self.bodies_now[t.person_id]] if t.person_id in self.bodies_now else None,
+                "confirm": (self.confirm or {}).get("intent") if self.confirm and pkt.t_ms < self.confirm["until"] else None,
                 "gesture": None if g is None else {
                     "eyes_closed_s": held(g.eyes_since), "cover_s": held(g.cover_since),
                     "peace_s": held(g.peace_since)},

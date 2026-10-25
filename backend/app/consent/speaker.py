@@ -80,8 +80,39 @@ def noise_floor(pid: str, history, audio_env) -> float:
     return max(FLOOR_ABS, FLOOR_MULT * lip_activity(samples[-150:]))
 
 
+def speech_window(turn: SpeechTurn, env: Optional[list]) -> Optional[tuple]:
+    """When did this utterance ACTUALLY sound, on the session clock? STT turn times are counted
+    from the start of the STT stream and can drift by a few hundred ms from the video clock; the
+    mic loudness envelope is stamped on the same clock as the frames. Find the loud stretch
+    overlapping (or nearest to) the STT turn. None if the envelope can't tell."""
+    if not env:
+        return None
+    lo, hi = turn.start_ms - 1500, turn.end_ms + 1500
+    near = [(t, v) for t, v in env if lo <= t <= hi]
+    if len(near) < 10:
+        return None
+    vals = np.array([v for _, v in env[-3000:]], dtype=np.float64)
+    thr = max(150.0, 3.0 * float(np.percentile(vals, 30)))   # well above the room's quiet level
+    runs, cur = [], None
+    for t, v in near:
+        if v >= thr:
+            cur = [t, t] if cur is None else [cur[0], t]
+        elif cur is not None and t - cur[1] > 250:          # bridge short pauses between words
+            runs.append(cur); cur = None
+    if cur is not None:
+        runs.append(cur)
+    runs = [r for r in runs if r[1] - r[0] >= 250]
+    if not runs:
+        return None
+    mid = (turn.start_ms + turn.end_ms) / 2
+    overlap = [r for r in runs if r[1] >= turn.start_ms - 300 and r[0] <= turn.end_ms + 300]
+    pick = overlap or [min(runs, key=lambda r: abs((r[0] + r[1]) / 2 - mid))]
+    return (min(r[0] for r in pick), max(r[1] for r in pick))
+
+
 def match_speaker(turn: SpeechTurn, visibility_history, audio_env: Optional[list] = None,
-                  strict: bool = False, agree_env: Optional[list] = None) -> SpeakerMatch:
+                  strict: bool = False, agree_env: Optional[list] = None,
+                  debug: Optional[dict] = None) -> SpeakerMatch:
     """visibility_history: iterable of (t_ms, person_ids[, {person_id: lip_openness}]).
     audio_env: optional [(t_ms, mic_rms)] -> pure audio-visual-sync mode (experimental).
     strict: require a larger lip-motion margin (used for "unblur me").
@@ -89,6 +120,12 @@ def match_speaker(turn: SpeechTurn, visibility_history, audio_env: Optional[list
     when lips and voice disagree (default mode)."""
     history = list(visibility_history)
     lo, hi = turn.start_ms - PAD_MS, turn.end_ms + PAD_MS
+    src = "stt_timestamps"
+    refined = speech_window(turn, agree_env or audio_env)
+    if refined is not None:
+        lo, hi, src = refined[0] - 150, refined[1] + 150, "mic_loudness"
+    if debug is not None:
+        debug.update(window_ms=[int(lo), int(hi)], window_source=src)
     window = [row for row in history if lo <= row[0] <= hi]
     if not window:
         return SpeakerMatch(turn.turn_id, None, "none", 0.0, 0.0, "UNKNOWN")
@@ -133,6 +170,8 @@ def match_speaker(turn: SpeechTurn, visibility_history, audio_env: Optional[list
     if len(present) == 1:
         pid, frac = next(iter(present.items()))
         samples = [o for _, o in series.get(pid, [])]
+        if debug is not None:
+            debug["people"] = {pid: {"lip_activity": round(lip_activity(samples), 4), "samples": len(samples)}}
         if len(samples) >= MIN_SAMPLES and lip_activity(samples) < MIN_ACTIVITY:
             return SpeakerMatch(turn.turn_id, None, "single_candidate", round(lip_activity(samples), 4),
                                 0.0, "OFFSCREEN")
@@ -142,6 +181,10 @@ def match_speaker(turn: SpeechTurn, visibility_history, audio_env: Optional[list
     acts = {pid: lip_activity([o for _, o in series.get(pid, [])]) for pid in present}
     floors = {pid: (noise_floor(pid, history, agree_env) if agree_env else MIN_ACTIVITY) for pid in present}
     rel = {pid: acts[pid] / max(floors[pid], MIN_ACTIVITY * 0.5) for pid in present}
+    if debug is not None:
+        debug["people"] = {pid: {"lip_activity": round(acts[pid], 4), "own_floor": round(floors[pid], 4),
+                                 "relative": round(rel[pid], 2), "samples": len(series.get(pid, []))}
+                           for pid in present}
     ranked = sorted(present, key=lambda p: rel[p], reverse=True)
     top_pid, run_pid = ranked[0], ranked[1]
     top, runner = acts[top_pid], acts[run_pid]
