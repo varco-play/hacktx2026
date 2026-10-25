@@ -26,6 +26,10 @@ class Settings:
     dev_controls: bool = _bool("ENABLE_DEV_CONTROLS")  # manual test protect; off for judges
     raw_upload: bool = _bool("RAW_UPLOAD_R2")  # raw/original to R2 restricted/ prefix (off)
     intent_provider: str = os.getenv("INTENT_PROVIDER", "gemini").strip().lower()  # gemini | muse
+    profile: str = os.getenv("QUALITY_PROFILE", "BALANCED").upper()  # ECO | BALANCED | QUALITY
+    camera: str = os.getenv("CAMERA", "")  # "" = first external (USB phone) else built-in; index; or name part
+    ingest_token: str = os.getenv("INGEST_TOKEN", "")  # companion app must send this
+    privacy_default: str = os.getenv("PRIVACY_DEFAULT", "visible").lower()  # visible | protect (strict opt-in)
     test_video: str = os.getenv("TEST_VIDEO", "")  # replay file instead of camera (labeled)
 
     # Secrets: read here, never returned by any endpoint.

@@ -11,7 +11,9 @@ from typing import Optional
 
 import cv2
 
+from backend.app.capture import CaptureWorker
 from backend.app.config import Settings
+from backend.app.profiles import PROFILES, ThermalGovernor
 from backend.app.media.recorders import PairedRecorder
 from backend.app.media.storage import PROTECTED_PREFIX, RESTRICTED_PREFIX
 from backend.app.vision.engine import VisionEngine
@@ -43,6 +45,7 @@ class Session:
         self.source = source
         self.source_label = source_label  # "CAMERA" or "TEST INPUT: <file>"
         self.engine = VisionEngine(self.session_id, face_models.detect, face_models.feature, signals=signals)
+        self.engine.strict = settings.privacy_default == "protect"
         self.recorder: Optional[PairedRecorder] = None
         self.finished_recordings: list[dict] = []
         self.storage = storage  # R2Storage or None (local files)
@@ -58,12 +61,24 @@ class Session:
         self.frame_times = deque(maxlen=60)
         self.error: Optional[str] = None
         self.listeners: list = []  # callables(event dict), thread-safe enqueue
+        self.capture = CaptureWorker(source, self.now_ms, self._source_event)
+        self.governor = ThermalGovernor(settings.profile)
+        self.e2e_ms = deque(maxlen=120)
+        self.camera_connected = True
+        self._proc = None
 
     def now_ms(self) -> int:
         return int((time.monotonic() - self._t0) * 1000)
 
+    def _source_event(self, type_: str, details: dict) -> None:
+        """Camera lifecycle events go into the same audited timeline as privacy events."""
+        self.camera_connected = type_ != "CAMERA_DISCONNECTED"
+        ev = self.engine._event(type("P", (), {"t_ms": self.now_ms()})(), type_, details=details)
+        self.engine.event_log.append(ev)
+        self._emit([ev])
+
     def start(self) -> None:
-        self.source.open()
+        self.capture.start()
         self._thread = threading.Thread(target=self._loop, name="vision-worker", daemon=True)
         self._thread.start()
 
@@ -72,7 +87,7 @@ class Session:
         if self._thread:
             self._thread.join(timeout=5)
         rec = self.stop_recording()
-        self.source.close()
+        self.capture.stop()
         removed = self.engine.registry.clear_biometrics()
         return {"session_id": self.session_id, "embeddings_deleted": removed, "recording": rec}
 
@@ -135,16 +150,30 @@ class Session:
                     pass
 
     def _loop(self) -> None:
+        next_due = 0.0
         while not self._stop.is_set():
-            frame = self.source.read()
-            t_ms = self.now_ms()
-            if frame is None:
-                self.error = "camera frame unavailable"
-                time.sleep(0.05)
+            change = self.governor.tick()
+            if change:
+                self._source_event(change, {"thermal": self.governor.state, "profile": self.governor.active})
+            prof = self.governor.profile()
+            self.engine.signals_every = prof["signals_every"]
+            f = self.capture.take(timeout_s=0.5)
+            if f is None:
+                if not self.capture.connected:
+                    # no camera: show a slate (never stale/raw frames); recording gets no frames
+                    self.error = "camera disconnected — waiting for the same device"
+                    ok, jpg = cv2.imencode(".jpg", full_shield((self.settings.height, self.settings.width, 3),
+                                                               "CAMERA DISCONNECTED"))
+                    if ok:
+                        self.latest_jpeg = jpg.tobytes()
                 continue
+            now = time.monotonic()
+            if now < next_due:
+                continue  # frame arrived faster than the profile's processing rate: drop it
+            next_due = now + 1.0 / prof["process_fps"]
             self.error = None
             self.frame_id += 1
-            frame.setflags(write=False)  # source is immutable from here on
+            frame, t_ms = f.bgr, f.t_capture_ms
             pkt = FramePacket(self.session_id, self.frame_id, t_ms, frame)
             try:
                 res = self.engine.step(pkt)
@@ -159,9 +188,11 @@ class Session:
             with self._lock:
                 if self.recorder is not None:
                     self.recorder.write(frame, protected, t_ms)
-            ok, jpg = cv2.imencode(".jpg", preview_labels(protected, tracks), [cv2.IMWRITE_JPEG_QUALITY, 80])
+            ok, jpg = cv2.imencode(".jpg", preview_labels(protected, tracks),
+                                   [cv2.IMWRITE_JPEG_QUALITY, prof["jpeg_quality"]])
             if ok:
                 self.latest_jpeg = jpg.tobytes()
+            self.e2e_ms.append(self.now_ms() - t_ms)
             self.latest_tracks, self.output_state = tracks, state
             self.frame_times.append(time.monotonic())
             self._emit(events)
@@ -169,16 +200,39 @@ class Session:
     def metrics(self) -> dict:
         ft = list(self.frame_times)
         fps = (len(ft) - 1) / (ft[-1] - ft[0]) if len(ft) > 1 and ft[-1] > ft[0] else 0.0
-        vm = sorted(self.vision_ms)
-        p = lambda q: round(vm[min(len(vm) - 1, int(q * len(vm)))], 1) if vm else None
-        return {"processed_fps": round(fps, 1), "vision_ms_p50": p(0.5), "vision_ms_p95": p(0.95),
-                "frames": self.frame_id}
+
+        def pct(values, q):
+            v = sorted(values)
+            return round(v[min(len(v) - 1, int(q * len(v)))], 1) if v else None
+
+        try:
+            import psutil
+            self._proc = self._proc or psutil.Process()
+            cpu, rss = round(self._proc.cpu_percent(None), 1), round(self._proc.memory_info().rss / 2**20)
+        except Exception:
+            cpu = rss = "unavailable"
+        caps = self.source.capabilities() if hasattr(self.source, "capabilities") else {}
+        return {"input_fps": self.capture.input_fps(), "processed_fps": round(fps, 1),
+                "vision_ms_p50": pct(self.vision_ms, .5), "vision_ms_p95": pct(self.vision_ms, .95),
+                "e2e_ms_p50": pct(self.e2e_ms, .5), "e2e_ms_p95": pct(self.e2e_ms, .95),
+                "frames": self.frame_id, "captured": self.capture.frames_in,
+                "dropped": self.capture.dropped, "queue_depth": self.capture.queue_depth(),
+                "active_tracks": len([t for t in self.latest_tracks if not t.get("coasting")]),
+                "cpu_percent": cpu, "rss_mb": rss,
+                "profile": self.governor.active, "profile_chosen": self.governor.chosen,
+                "host_thermal": self.governor.state, "throttled": self.governor.throttled,
+                "device_thermal": caps.get("thermal", "unavailable"),
+                "device_battery": caps.get("battery", "unavailable")}
 
     def snapshot(self) -> dict:
         rec = self.recorder.info() if self.recorder else None
         return {
             "session_id": self.session_id,
             "source": self.source_label,
+            "source_status": self.source.status() if hasattr(self.source, "status") else {},
+            "source_capabilities": self.source.capabilities() if hasattr(self.source, "capabilities") else {},
+            "camera_connected": self.capture.connected,
+            "strict": self.engine.strict,
             "t_ms": self.now_ms(),
             "output_state": self.output_state.value,
             "error": self.error,

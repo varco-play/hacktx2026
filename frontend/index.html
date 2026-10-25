@@ -53,13 +53,19 @@
       <div class="stage"><img id="preview" alt="Protected preview"><div id="toast"></div></div>
       <div class="banner" id="testBanner"></div>
       <div class="controls">
+        <select id="srcSel" title="input source"></select>
         <button class="primary" id="bStart">Start session</button>
         <button id="bRec">Start recording</button>
         <button id="bVoice">Start voice</button>
         <button class="danger" id="bEnd">End session</button>
+        <select id="profSel" title="quality profile"><option>ECO</option><option selected>BALANCED</option><option>QUALITY</option></select>
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted)"><input type="checkbox" id="speak" checked> spoken confirmations</label>
       </div>
       <div class="metrics" id="metrics"></div>
+    </section>
+    <section style="margin-top:16px">
+      <h2>Diagnostics (measured — "unavailable" when not measurable)</h2>
+      <table id="diag"></table>
     </section>
     <section style="margin-top:16px">
       <h2>Recordings (protected only)</h2>
@@ -69,7 +75,7 @@
   <div>
     <section>
       <h2>People in this session</h2>
-      <table><thead><tr><th>In frame</th><th>Privacy</th><th>Lips</th><th>Gesture</th><th></th></tr></thead><tbody id="people"></tbody></table>
+      <table><thead><tr><th>In frame</th><th>Consent</th><th>Lips</th><th>Gesture</th><th></th></tr></thead><tbody id="people"></tbody></table>
       <div class="metrics" id="away"></div>
       <div class="metrics">Blur: say "blur me", close your eyes 2 s, or cover your eyes 1.5 s. Unblur your own face: ✌ peace sign 1 s or say "unblur me". "Visible, no request" is not consent. Face data is kept only for people who asked to be blurred.</div>
     </section>
@@ -96,7 +102,17 @@ async function api(path, method = "POST") {
 function pill(el, text, cls) { el.textContent = text; el.className = "pill " + (cls || ""); }
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 
-$("bStart").onclick = async () => { await api("/api/session/start"); previewOn = false; };
+$("bStart").onclick = async () => { await api("/api/session/start?source=" + encodeURIComponent($("srcSel").value)); previewOn = false; };
+$("profSel").onchange = async () => { if (st.session_id) await api("/api/profile/" + $("profSel").value); };
+async function loadSources() {
+  const s = await (await fetch("/api/sources")).json();
+  const opts = s.cameras.map(c => [`camera:${c.index}`, `${c.kind === "usb_camera" ? "USB / external" : "Built-in"}: ${c.name}`]);
+  if (s.test_video) opts.push([`file:${s.test_video}`, "TEST INPUT: " + s.test_video.split("/").pop()]);
+  if (s.companion.enabled) opts.push(["companion", "Companion app (Meta glasses / Mock Device via DAT)"]);
+  $("srcSel").innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
+  const ext = s.cameras.find(c => c.kind === "usb_camera");
+  $("srcSel").value = s.test_video ? `file:${s.test_video}` : ext ? `camera:${ext.index}` : (opts[0] || [""])[0];
+}
 $("bEnd").onclick = async () => { await api("/api/session/end"); $("preview").removeAttribute("src"); previewOn = false; };
 $("bRec").onclick = async () => { await api(st.recording ? "/api/recording/stop" : "/api/recording/start"); };
 $("bVoice").onclick = async () => {
@@ -167,16 +183,33 @@ function render() {
   $("bVoice").textContent = v.state !== "OFF" ? "Stop voice" : "Start voice";
 
   const m = st.metrics || {};
+  if (m.profile_chosen && document.activeElement !== $("profSel")) $("profSel").value = m.profile_chosen;
+  const un = (v, suf = "") => v === undefined || v === null || v === "unavailable" ? '<span style="color:var(--muted)">unavailable</span>' : esc(v) + suf;
+  const ss = st.source_status || {};
+  $("diag").innerHTML = active ? [
+    ["Source", `${esc(st.source)} — ${esc(ss.state || "?")}${st.camera_connected === false ? ' <b style="color:var(--bad)">DISCONNECTED</b>' : ""}`],
+    ["Input FPS / processed FPS", `${un(m.input_fps)} / ${un(m.processed_fps)}`],
+    ["Vision latency p50 / p95", `${un(m.vision_ms_p50, " ms")} / ${un(m.vision_ms_p95, " ms")}`],
+    ["Capture→preview latency p50 / p95", `${un(m.e2e_ms_p50, " ms")} / ${un(m.e2e_ms_p95, " ms")}`],
+    ["Captured / processed / dropped (stale)", `${un(m.captured)} / ${un(m.frames)} / ${un(m.dropped)} · queue ${un(m.queue_depth)}`],
+    ["Active face tracks", un(m.active_tracks)],
+    ["Quality profile", `${un(m.profile)}${m.throttled ? ' <b style="color:var(--warn)">(thermal throttle; chosen ' + esc(m.profile_chosen) + ")</b>" : ""}`],
+    ["Process CPU / memory", `${un(m.cpu_percent, "%")} / ${un(m.rss_mb, " MB")}`],
+    ["Mac thermal state", un(m.host_thermal)],
+    ["Glasses/phone thermal · battery", `${un(m.device_thermal)} · ${un(m.device_battery)}`],
+    ["Landmark watchdog", `${(st.landmark_stalls || {}).timeouts ?? 0} timeouts · ${(st.landmark_stalls || {}).restarts ?? 0} restarts`],
+    ["Voice: last decision delay", (() => { const t = ((st.voice || {}).turns || []).slice(-1)[0]; return t ? `${un(t.apply_delay_ms, " ms")} after speech end (decide ${un(t.decide_ms, " ms")})` : un(null); })()],
+  ].map(([k, v]) => `<tr><th>${k}</th><td>${v}</td></tr>`).join("") : "";
   $("metrics").textContent = active ? `measured: ${m.processed_fps ?? "–"} fps · vision p50 ${m.vision_ms_p50 ?? "–"} ms · p95 ${m.vision_ms_p95 ?? "–"} ms · frames ${m.frames ?? 0} · binding: ${st.speaker_binding || "–"}${st.error ? " · ERROR " + st.error : ""}` : "";
 
   const tracks = st.tracks || [];
   const byPid = new Map(tracks.filter(t => t.person_id).map(t => [t.person_id, t]));
   const persons = new Map((st.persons || []).map(p => [p.person_id, p]));
   const privacyLabel = (p) => p.privacy === "BLURRED_BY_REQUEST"
-      ? `<span style="color:var(--bad)">BLURRED · ${esc(p.protect_source)}</span>`
+      ? `<span style="color:var(--bad)">${esc(p.consent_state)} · blurred (${esc(p.protect_source)})</span>`
       : p.privacy === "VISIBLE_BY_CONSENT"
-      ? `<span style="color:var(--ok)">visible · consented (${esc(p.protect_source)})</span>`
-      : `<span style="color:var(--muted)">visible · no request</span>`;
+      ? `<span style="color:var(--ok)">GRANTED · visible (${esc(p.protect_source)})</span>`
+      : `<span style="color:var(--muted)">UNKNOWN · ${st.strict ? "blurred (strict mode)" : "visible, no request"}</span>`;
   const meter = (label, v, max) => v == null ? "" :
       `<div style="font-size:11px;color:var(--warn)">${label} ${v.toFixed(1)}/${max}s
         <span style="display:inline-block;height:6px;width:${Math.min(60, 60 * v / max)}px;background:var(--warn);border-radius:3px"></span></div>`;
@@ -190,13 +223,13 @@ function render() {
       <td>${t.mouth_open != null ? lipBar(t.mouth_open) : "–"}</td><td>${gest}</td><td>${btn}</td></tr>`;
   });
   rows = rows.concat(tracks.filter(t => !t.person_id).map(t =>
-    `<tr><td>${esc(t.track_id)}</td><td style="color:var(--warn)">identifying…${t.shielded ? " · shielded" : ""}</td><td>–</td><td>–</td><td></td></tr>`));
+    `<tr><td>${esc(t.track_id)}</td><td style="color:var(--warn)">UNCERTAIN · identifying…${t.shielded ? " · shielded" : ""}</td><td>–</td><td>–</td><td></td></tr>`));
   $("people").innerHTML = rows.join("") || `<tr><td colspan="5" style="color:var(--muted)">nobody in frame</td></tr>`;
   const away = [...persons.values()].filter(p => !byPid.has(p.person_id));
   $("away").textContent = away.length ? "Left the frame (remembered this session): " + away.map(p => p.person_id + (p.privacy === "BLURRED_BY_REQUEST" ? " [blurred on return]" : "")).join(", ") : "";
 
   $("turns").innerHTML = (v.turns || []).slice().reverse().map(t =>
-    `<div>${t.early_partial ? "⚡" : ""}“${esc(t.text)}” → <b>${esc(t.intent)}</b>/${esc(t.speaker_ref)} via ${esc(t.source)} · speaker ${esc(t.speaker_status)} (${esc(t.speaker_method)}${t.speaker_score != null ? " " + t.speaker_score + "/" + t.speaker_margin : ""}) · ${esc(t.action || "no-op")}${t.target ? " → " + esc(t.target) : ""} · ${t.decide_ms ?? "?"} ms</div>`).join("") || "—";
+    `<div>${t.early_partial ? "⚡" : ""}“${esc(t.text)}” → <b>${esc(t.intent)}</b>/${esc(t.speaker_ref)} via ${esc(t.source)} · speaker ${esc(t.speaker_status)} → ${esc(t.target || "nobody")} (${esc(t.speaker_method)}${t.speaker_score != null ? `, evidence ${t.speaker_score} / margin ${t.speaker_margin} — uncalibrated, not a probability` : ""}) · ${esc(t.action || "no-op")}${t.target ? " → " + esc(t.target) : ""} · ${t.decide_ms ?? "?"} ms</div>`).join("") || "—";
   $("events").innerHTML = (st.events || []).slice().reverse().map(e =>
     `<div>${(e.t_ms / 1000).toFixed(1)}s ${esc(e.type)} ${esc(e.person_id || "")} ${e.source ? "[" + esc(e.source) + (e.details && e.details.gesture ? ": " + esc(e.details.gesture) : "") + "]" : ""}</div>`).join("") || "—";
   const recs = st.finished_recordings || [];
@@ -206,6 +239,7 @@ function render() {
 
 async function boot() {
   health = await (await fetch("/api/health")).json();
+  await loadSources();
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const connect = () => {
     const ws = new WebSocket(`${proto}://${location.host}/api/events`);

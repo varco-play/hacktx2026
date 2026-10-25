@@ -25,6 +25,17 @@ class Person:
     protected_at_ms: Optional[int] = None
     protect_source: Optional[str] = None
     released_at_ms: Optional[int] = None
+    revoked: bool = False  # had consented, then asked for blur again
+
+    @property
+    def consent_state(self) -> str:
+        """Reporting vocabulary: UNKNOWN (no request — NOT consent), DENIED, GRANTED, REVOKED.
+        UNCERTAIN is reported for faces whose identity is still being checked (no person yet)."""
+        if self.privacy == Privacy.BLURRED_BY_REQUEST:
+            return "REVOKED" if self.revoked else "DENIED"
+        if self.privacy == Privacy.VISIBLE_BY_CONSENT:
+            return "GRANTED"
+        return "UNKNOWN"
 
     @property
     def protected(self) -> bool:
@@ -58,6 +69,7 @@ class PersonRegistry:
         p = self.persons.get(person_id)
         if p is None or p.protected:
             return False
+        p.revoked = p.privacy == Privacy.VISIBLE_BY_CONSENT
         p.privacy = Privacy.BLURRED_BY_REQUEST
         p.protected_at_ms = t_ms
         p.protect_source = source
@@ -85,6 +97,7 @@ class PersonRegistry:
             {
                 "person_id": p.person_id,
                 "privacy": p.privacy.value,
+                "consent_state": p.consent_state,
                 "last_seen_ms": p.last_seen_ms,
                 "protected_at_ms": p.protected_at_ms,
                 "protect_source": p.protect_source,

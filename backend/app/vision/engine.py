@@ -19,7 +19,7 @@ import numpy as np
 from backend.app.consent.registry import PersonRegistry
 from backend.app.vision.detector import Detection, cosine
 from backend.app.vision.renderer import full_shield, render_protected
-from shared.contracts import (FramePacket, FrameResult, IdentityStatus,
+from shared.contracts import (FramePacket, FrameResult, IdentityStatus, Privacy,
                               OutputState, PrivacyRequest, RequestAction,
                               event_envelope)
 
@@ -110,6 +110,10 @@ class VisionEngine:
         self.detect = detect        # bgr -> list[Detection]
         self.feature = feature      # (bgr, Detection) -> unit (1,128) feature
         self.signals = signals      # optional (bgr, t_ms) -> {"faces": [...], "hands": [...]}
+        self.strict = False         # PRIVACY_DEFAULT=protect: blur everyone until they consent
+        self.signals_every = 1      # quality profile: run landmarks every Nth frame, reuse otherwise
+        self._sig_n = 0
+        self._sig_last = {"faces": [], "hands": [], "heads": []}
         self.cfg = config or EngineConfig()
         self.registry = PersonRegistry(session_id)
         self.tracks: list[Track] = []
@@ -293,6 +297,15 @@ class VisionEngine:
             t.pending_frames += 1
             if t.pending_frames > cfg.pending_timeout:
                 t.status = IdentityStatus.AMBIGUOUS_MATCH
+            someone_protected_missing = any(q.protected and q.person_id not in live_bound
+                                            for q in self.registry.persons.values())
+            if not someone_protected_missing:
+                # Nobody who asked for blur is unaccounted for, so this face can't be them:
+                # give it an ID right away — no face features computed at all.
+                person = self.registry.new_person(pkt.t_ms)
+                self._bind(pkt, t, person, IdentityStatus.CONFIRMED_NEW, -1.0, events)
+                live_bound.add(person.person_id)
+                continue
             if not good:
                 continue
             f = self.feature(pkt.bgr, t.det)
@@ -379,10 +392,14 @@ class VisionEngine:
         """Landmark evidence. Failure = no evidence (never unshields, never blurs)."""
         if self.signals is None:
             return {"faces": [], "hands": [], "heads": []}
+        self._sig_n += 1
+        if self.signals_every > 1 and self._sig_n % self.signals_every:
+            return self._sig_last
         try:
-            return self.signals(pkt.bgr, pkt.t_ms)
+            self._sig_last = self.signals(pkt.bgr, pkt.t_ms)
         except Exception:
-            return {"faces": [], "hands": [], "heads": []}
+            self._sig_last = {"faces": [], "hands": [], "heads": []}
+        return self._sig_last
 
     def _follow_heads(self, pkt: FramePacket, sig: dict) -> None:
         """Face lost (profile, looking away, hand over face)? Follow the pose-estimated head
@@ -516,21 +533,31 @@ class VisionEngine:
                 self._unprotect(pkt, pid, "GESTURE", {"gesture": "peace_sign"}, events)
                 g.cooldown_until = now + cfg.gesture_cooldown_ms
                 g.peace_since = None
+            if self.strict and not p.protected and p.privacy != Privacy.VISIBLE_BY_CONSENT \
+                    and g.peace_since is not None and now - g.peace_since >= cfg.peace_hold_ms:
+                p.privacy = Privacy.VISIBLE_BY_CONSENT  # strict mode: explicit opt-in to be shown
+                events.append(self._event(pkt, "PRIVACY_RELEASED", pid, "GESTURE", {"gesture": "peace_sign", "mode": "strict_opt_in"}))
+                g.cooldown_until = now + cfg.gesture_cooldown_ms
+                g.peace_since = None
 
     def _decide_regions(self, pkt: FramePacket):
         regions = []
         shielded_any = False
         unresolved = pkt.t_ms < self.unresolved_until_ms
-        bound = {t.person_id for t in self.tracks if t.person_id}
-        protected_unbound = any(p.protected and p.person_id not in bound
+        # A protected person whose track is only coasting (no live detection) counts as
+        # MISSING: if they "teleport" (tracker loses them, new track elsewhere) the new face
+        # must be shielded until identified. Found as a 4/337-frame leak in an e2e replay.
+        live_bound = {t.person_id for t in self.tracks if t.person_id and t.missed == 0}
+        protected_unbound = any(p.protected and p.person_id not in live_bound
                                 for p in self.registry.persons.values())
         for t in self.tracks:
             p = self.registry.get(t.person_id)
             if p is not None:
-                shield = p.protected
+                # strict policy: anyone without explicit consent is blurred
+                shield = p.protected or (self.strict and p.privacy != Privacy.VISIBLE_BY_CONSENT)
             else:
                 # unknown face while a protected person is unaccounted for: shield until decided
-                shield = protected_unbound
+                shield = protected_unbound or self.strict
             if unresolved:
                 shield = True
             t.shielded = shield
@@ -550,6 +577,7 @@ class VisionEngine:
                 "person_id": t.person_id,
                 "identity_status": t.status.value,
                 "privacy": p.privacy.value if p else None,
+                "consent_state": p.consent_state if p else "UNCERTAIN",
                 "shielded": t.shielded,
                 "coasting": t.missed > 0,
                 "head_only": t.head_only,

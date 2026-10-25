@@ -12,3 +12,5 @@ google-genai
 pytest
 sounddevice
 boto3
+pyobjc-framework-AVFoundation
+psutil

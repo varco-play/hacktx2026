@@ -15,7 +15,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.app.capture import CameraSource, FileSource
+from backend.app.capture import (AVFoundationCameraSource, CompanionStreamSource, VideoFileSource,
+                                 list_video_devices)
 from backend.app.config import ROOT, Settings
 from backend.app.runtime import Session
 from backend.app.vision.detector import FaceModels
@@ -35,7 +36,7 @@ async def require_app_header(request, call_next):
         from fastapi.responses import JSONResponse
         return JSONResponse({"detail": "missing X-ConsentLens header"}, status_code=403)
     return await call_next(request)
-_state: dict = {"session": None, "models": None, "voice": None, "storage": None}
+_state: dict = {"session": None, "models": None, "voice": None, "storage": None, "companion": None}
 
 
 def _storage():
@@ -83,7 +84,8 @@ def health():
         "models_present": all((Path(settings.models_dir) / f).is_file() for f in
                               ("face_detection_yunet_2023mar.onnx", "face_recognition_sface_2021dec.onnx")),
         "session_active": _state["session"] is not None,
-        "source": settings.test_video and "TEST INPUT" or "CAMERA",
+        "source_default": settings.test_video and "TEST INPUT" or (settings.camera or "first external camera, else built-in"),
+        "cameras": [d["name"] for d in list_video_devices()],
         "diagnostic_original_enabled": settings.diagnostic_original,
         "dev_controls_enabled": settings.dev_controls,
         "meta_key_configured": bool(settings.meta_key),
@@ -93,17 +95,41 @@ def health():
     }
 
 
+def _make_source(choice: str):
+    """choice: "" (settings default) | "camera:<index or name part>" | "file:<path>" | "companion".
+    The consent engine never changes with the source (TEST 10)."""
+    choice = choice or (f"file:{settings.test_video}" if settings.test_video else f"camera:{settings.camera}")
+    if choice.startswith("file:"):
+        path = choice[5:]
+        return VideoFileSource(path, settings.width, settings.height, settings.fps), f"TEST INPUT: {Path(path).name}"
+    if choice == "companion":
+        if not settings.ingest_token:
+            raise HTTPException(400, "set INGEST_TOKEN in .env before accepting companion-app frames")
+        src = CompanionStreamSource(settings.width, settings.height)
+        _state["companion"] = src
+        return src, "COMPANION APP (origin reported by app)"
+    src = AVFoundationCameraSource(choice[7:] if choice.startswith("camera:") else "", settings.width,
+                                   settings.height, 30)
+    src.initialize()
+    return src, f"CAMERA: {src.device['name']}" + (" (USB/external)" if src.kind == "usb_camera" else " (built-in)")
+
+
+@app.get("/api/sources")
+def sources():
+    return {"cameras": list_video_devices(), "companion": {"enabled": bool(settings.ingest_token)},
+            "test_video": settings.test_video or None,
+            "default": f"file:{settings.test_video}" if settings.test_video else f"camera:{settings.camera}"}
+
+
 @app.post("/api/session/start")
-def session_start():
+def session_start(source: str = ""):
     with _lock:
         if _state["session"] is not None:
             raise HTTPException(409, "session already active (one camera owner)")
-        if settings.test_video:
-            src = FileSource(settings.test_video, settings.width, settings.height, settings.fps)
-            label = f"TEST INPUT: {Path(settings.test_video).name}"
-        else:
-            src = CameraSource(settings.camera_index, settings.width, settings.height, settings.fps)
-            label = "CAMERA"
+        try:
+            src, label = _make_source(source)
+        except RuntimeError as exc:
+            raise HTTPException(503, str(exc))
         try:
             from backend.app.vision.landmarks import Signals
             signals = Signals(settings.models_dir)  # fresh per session (VIDEO-mode timestamps)
@@ -116,6 +142,44 @@ def session_start():
             raise HTTPException(503, f"could not start capture: {exc}")
         _state["session"] = sess
         return {"session_id": sess.session_id, "source": label}
+
+
+@app.post("/api/profile/{name}")
+def set_profile(name: str):
+    from backend.app.profiles import PROFILES
+    if name.upper() not in PROFILES:
+        raise HTTPException(404, f"profiles: {list(PROFILES)}")
+    sess = _session()
+    sess.governor.choose(name.upper())
+    return {"chosen": sess.governor.chosen, "active": sess.governor.active, "throttled": sess.governor.throttled}
+
+
+@app.websocket("/api/ingest")
+async def ingest(ws: WebSocket):
+    """Companion app (iOS, Meta Wearables DAT) pushes frames: each binary message is
+    4-byte big-endian header length + JSON header + JPEG bytes. Token required."""
+    import hmac
+    import json
+    token = ws.query_params.get("token", "")
+    if not settings.ingest_token or not hmac.compare_digest(token, settings.ingest_token):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    try:
+        while True:
+            msg = await ws.receive_bytes()
+            if len(msg) < 4:
+                continue
+            n = int.from_bytes(msg[:4], "big")
+            if n > 4096 or len(msg) < 4 + n:
+                continue
+            header = json.loads(msg[4:4 + n] or b"{}")
+            src = _state.get("companion")
+            ok = src.push(msg[4 + n:], header) if src is not None else False
+            await ws.send_json({"ack": header.get("seq"), "accepted": bool(ok),
+                                "session_active": _state["session"] is not None})
+    except (WebSocketDisconnect, RuntimeError, ValueError):
+        return
 
 
 @app.post("/api/session/end")

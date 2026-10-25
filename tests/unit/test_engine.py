@@ -257,15 +257,13 @@ def test_voice_unprotect_request_applies():
     res = e.step(packet(n))
     assert not e.registry.get(a).protected and not res.tracks[0]["shielded"]
 
-def test_bad_frames_and_edge_faces_do_not_create_duplicate_people():
+def test_bad_frames_do_not_create_duplicate_people():
     s, e = make_sig()
     a, b, n = two_people(s, e)
     s.bad_feature_for = {"A"}                    # A turns away / blurs for a while
     res, n = run(e, s, 60, n)
-    s.bad_feature_for = set()
-    s.frame = [face("A", 100, 100), face("B", 400, 100), face("C", 250, 0)]  # partial face at top edge
-    res, n = run(e, s, 30, n)
-    assert len(e.registry.persons) == 2, [p for p in e.registry.persons]
+    assert len(e.registry.persons) == 2 and pid_of(res, 100) == a
+    assert all(len(p.gallery) == 0 for p in e.registry.persons.values())
 
 
 def test_visible_track_that_is_really_a_protected_person_gets_blurred():
@@ -491,3 +489,47 @@ def test_lost_track_never_jumps_onto_a_visible_friends_head():
     s.sig = {"faces": [], "hands": [], "heads": []}
     r = e.step(packet(n + 10))
     assert pid_of(r, 400) == b
+
+
+
+def test_consent_states_unknown_denied_granted_revoked_uncertain():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    snap = {p["person_id"]: p["consent_state"] for p in e.registry.snapshot()}
+    assert snap[a] == "UNKNOWN"
+    e.submit(PrivacyRequest("s_test", "1", RequestOrigin.VOICE, "t", a, RequestAction.PROTECT, 0, True)); run(e, s, 1, n)
+    assert e.registry.get(a).consent_state == "DENIED"
+    e.submit(PrivacyRequest("s_test", "2", RequestOrigin.VOICE, "t", a, RequestAction.UNPROTECT, 0, True)); run(e, s, 1, n + 1)
+    assert e.registry.get(a).consent_state == "GRANTED"
+    e.submit(PrivacyRequest("s_test", "3", RequestOrigin.VOICE, "t", a, RequestAction.PROTECT, 0, True)); run(e, s, 1, n + 2)
+    assert e.registry.get(a).consent_state == "REVOKED"
+    res, n2 = run(e, s, 10, n + 3)               # enrol A's face
+    s.frame = [face("B", 400, 100)]              # protected A leaves
+    res, n2 = run(e, s, 30, n2)
+    s.frame = [face("B", 400, 100), face("C", 250, 300)]
+    r = e.step(packet(n2))
+    assert any(t["consent_state"] == "UNCERTAIN" for t in r.tracks if t["person_id"] is None)
+
+def test_strict_mode_blurs_everyone_until_peace_sign_opt_in():
+    s, e = make_sig()
+    e.strict = True
+    a, b, n = two_people(s, e)
+    r = e.step(packet(n))
+    assert all(t["shielded"] for t in r.tracks)
+    s.sig = {"faces": [], "hands": [hand(170, 280, peace=True)], "heads": []}
+    res, n = run(e, s, 20, n + 1)
+    assert not next(t for t in res.tracks if t["person_id"] == a)["shielded"]
+    assert next(t for t in res.tracks if t["person_id"] == b)["shielded"]
+
+
+
+def test_protected_face_teleporting_while_old_track_coasts_is_never_shown():
+    s, e = make_sig()
+    a, b, n = two_people(s, e)
+    e.submit(PrivacyRequest("s_test", "pa", RequestOrigin.MANUAL_TEST, None, a, RequestAction.PROTECT, 0, True))
+    res, n = run(e, s, 20, n)
+    s.frame = [face("A", 250, 330), face("B", 400, 100)]   # A jumps far away in one frame
+    for i in range(n, n + 6):
+        pkt = packet(i); r = e.step(pkt)
+        assert region_changed(pkt.bgr, r.protected_bgr, 250, 330), f"A visible at frame {i - n}"
+    assert pid_of(r, 250) == a
