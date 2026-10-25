@@ -311,6 +311,11 @@ class VisionEngine:
             t.pending_frames += 1
             if t.pending_frames > cfg.pending_timeout:
                 t.status = IdentityStatus.AMBIGUOUS_MATCH
+            if self._overlaps_tracked_person(t):
+                # A second detection on top of someone already tracked (e.g. a hand over the
+                # eyes detected as a "face"). Never make it a new person — that created ghost
+                # identities in live tests (a protected ghost then shielded everyone as "checking").
+                continue
             pid = self._continuity(t, pkt, live_bound)
             if pid is not None:
                 self._bind(pkt, t, self.registry.get(pid), IdentityStatus.MATCHED, -1.0, events,
@@ -357,6 +362,11 @@ class VisionEngine:
                 person.add_feature(f)
                 self._bind(pkt, t, person, IdentityStatus.MATCHED, best, events)
             live_bound.add(person.person_id)
+
+    def _overlaps_tracked_person(self, t: Track) -> bool:
+        return any(o is not t and o.person_id and o.missed == 0 and
+                   (_iou(t.box, o.box) > 0.2 or _center_dist(t.box, o.box) < 0.5 * max(o.box[2], o.box[3]))
+                   for o in self.tracks)
 
     def _continuity(self, t: Track, pkt: FramePacket, live_bound: set):
         """A face that appears where a known person's track just broke (still coasting, or lost
@@ -661,8 +671,12 @@ class VisionEngine:
         unresolved = pkt.t_ms < self.unresolved_until_ms
         bound = {t.person_id for t in self.tracks if t.person_id}
         live_bound = {t.person_id for t in self.tracks if t.person_id and t.missed == 0}
-        # protected person not in the frame at all -> any unknown face could be them
-        protected_gone = any(p.protected and p.person_id not in bound for p in self.registry.persons.values())
+        # protected person not in the frame at all -> any unknown face could be them. A protected
+        # record with NO face samples can never be re-identified (e.g. a ghost from a bad detection),
+        # so it only counts for 10 s after it was last seen instead of shielding newcomers forever.
+        protected_gone = any(p.protected and p.person_id not in bound and
+                             (p.gallery or pkt.t_ms - p.last_seen_ms < 10_000)
+                             for p in self.registry.persons.values())
         # protected person only briefly undetected -> an unknown face far from everyone could be
         # them "teleporting" (fast move), but an unknown face sitting where a known VISIBLE person
         # just was is that person's own track re-forming — never blur a bystander for that.

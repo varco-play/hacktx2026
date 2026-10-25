@@ -1,6 +1,8 @@
 """Writes protection into real pixels of a COPY of the source frame."""
 from __future__ import annotations
 
+from functools import lru_cache
+
 import cv2
 import numpy as np
 
@@ -30,11 +32,23 @@ def obscure(roi: np.ndarray) -> np.ndarray:
 def oval_mask(w: int, h: int) -> np.ndarray:
     """Float mask 0..1: solid ellipse filling the box, feathered only at its outer rim.
     The face box sits at ~0.5 of the ellipse radius after padding, so the soft edge never
-    reaches facial features."""
+    reaches facial features. Built once per (16-px quantised) size and cached — recomputing
+    the feathering every frame was a measurable share of CPU in live tests."""
+    qw, qh = max(16, (w + 15) // 16 * 16), max(16, (h + 15) // 16 * 16)
+    m = _oval_mask_q(qw, qh)
+    if (qw, qh) != (w, h):
+        m = cv2.resize(m, (w, h), interpolation=cv2.INTER_LINEAR)
+    return m[..., None]
+
+
+@lru_cache(maxsize=128)
+def _oval_mask_q(w: int, h: int) -> np.ndarray:
     m = np.zeros((h, w), np.uint8)
     cv2.ellipse(m, (w // 2, h // 2), (max(1, int(w * 0.48)), max(1, int(h * 0.48))), 0, 0, 360, 255, -1)
     m = cv2.GaussianBlur(m, (0, 0), sigmaX=max(1.5, min(w, h) * 0.035))
-    return (m.astype(np.float32) / 255.0)[..., None]
+    out = m.astype(np.float32) / 255.0
+    out.setflags(write=False)  # shared cached array
+    return out
 
 
 def blur_oval(img: np.ndarray, box) -> None:

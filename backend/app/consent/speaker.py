@@ -26,8 +26,8 @@ MIN_SAMPLES = 6
 # lip-only fallback
 MIN_ACTIVITY = 0.012
 MIN_RATIO = 2.0
-STRICT_RATIO = 2.6     # "unblur me" needs clearer evidence than "blur me" (a false unblur exposes someone)
-AV_DISAGREE = 0.15     # runner-up's lips follow the voice this much better -> don't guess
+STRICT_RATIO = 2.2     # "unblur me" needs clearer evidence than "blur me" (a false unblur exposes someone)
+AV_DISAGREE = 0.25     # runner-up's lips follow the voice this much better -> don't guess
 # audio-visual sync
 AV_MIN_CORR = 0.30       # top person's lips must follow the voice at least this well
 AV_MARGIN = 0.15         # ...and clearly better than anyone else

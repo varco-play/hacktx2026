@@ -14,8 +14,9 @@ PROFILES = {
     # process_fps: frames that get the cheap path (detect + track + blur + encode) — this is
     #              what you SEE and what gets RECORDED, so keep it smooth.
     # analyze_hz:  frames that also run MediaPipe face/hand/pose + gestures (the expensive part).
-    "ECO": {"process_fps": 15, "analyze_hz": 8, "jpeg_quality": 70},
-    "BALANCED": {"process_fps": 30, "analyze_hz": 15, "jpeg_quality": 80},  # 15 Hz = live-tested MVP rate
+    # live test 2026-10-25: 30 fps + 15 Hz analysis + pose = 242% CPU on the M4 -> too hot
+    "ECO": {"process_fps": 12, "analyze_hz": 6, "jpeg_quality": 70},
+    "BALANCED": {"process_fps": 20, "analyze_hz": 10, "jpeg_quality": 78},
     "QUALITY": {"process_fps": 30, "analyze_hz": 30, "jpeg_quality": 85},
 }
 THERMAL_NAMES = {0: "nominal", 1: "fair", 2: "serious", 3: "critical"}

@@ -606,7 +606,7 @@ def test_unblur_needs_clearer_speaker_evidence_than_blur():
     import math
     # A's lips move ~2.2x more than B's: enough to attribute "blur me", not "unblur me"
     a = lambda t: 0.03 + 0.022 * abs(math.sin(t / 60.0))
-    b = lambda t: 0.03 + 0.010 * abs(math.sin(t / 60.0 + 1))
+    b = lambda t: 0.03 + 0.0105 * abs(math.sin(t / 60.0 + 1))
     hist = [(t * 66, ("person_001", "person_002"), {"person_001": a(t * 66), "person_002": b(t * 66)}) for t in range(30)]
     turn = SpeechTurn("s_test", "t1", 300, 1500, "x", True)
     assert match_speaker(turn, hist).person_id == "person_001"

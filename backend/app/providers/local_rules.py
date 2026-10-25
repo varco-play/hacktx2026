@@ -28,6 +28,7 @@ _DENY = [
     r"\b(hide|cover)\s+(my\s+face|my\s+identity|me)\b",
     r"\bkeep\s+me\s+blurred\b",
     r"\bi\s+(do\s*n[o']?t|do\s+not|dont)\s+consent\b",
+    r"\bi\s+(do\s*n[o']?t|do\s+not|dont)\s+(give|grant)\s+(you\s+)?(my\s+)?(consent|permission)\b",
 ]
 _PERMIT = (r"(you\s+can|you\s+could|go\s+ahead(\s+and)?|feel\s+free\s+to|"
            r"it'?s\s+(all\s+good|ok|okay|fine|cool)(\s+to)?|you'?re\s+(good|fine|ok|okay)\s+to)")
@@ -39,6 +40,8 @@ _ALLOW = [
     rf"^\W*(yeah|yes|yep|yup|sure|ok|okay|alright|bet|aight)?\W*(record|film)\s+me\b",   # "yeah, record me"
     r"\bshow\s+my\s+face\b",
     r"\bi\s+(now\s+)?consent\b",
+    r"\bi\s+(give|grant)\s+(you\s+)?(my\s+)?(consent|permission)\b",
+    r"\byou\s+have\s+my\s+(consent|permission)\b",
     r"\b(i'?m|im|i\s+am)\s+(good|fine|ok|okay|cool|down)\s+(with\s+(it|that|being\s+(filmed|recorded|shown|on\s+camera))|"
     r"being\s+(filmed|recorded|shown|on\s+camera)|on\s+camera)\b",
 ]
