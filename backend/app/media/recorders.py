@@ -96,6 +96,7 @@ class PairedRecorder:
             "recording_id": self.recording_id,
             "closed": self.closed,
             "frames": self.protected.frames,
+            "duration_s": round(max(0, self.protected.last_pts) / 1000, 1),
             "has_diagnostic_original": self.original is not None,
             "error": self.error,
         }

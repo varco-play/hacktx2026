@@ -3,280 +3,365 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ConsentLens</title>
+<title>Consent</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230866ff'/%3E%3Cellipse cx='16' cy='16' rx='9' ry='7' fill='none' stroke='white' stroke-width='3'/%3E%3C/svg%3E">
 <style>
   :root {
-    --bg:#0a0c0f; --surface:#111419; --raised:#161a20; --line:#21262e; --line2:#2c333d;
-    --text:#e7e9ec; --muted:#8a929e; --faint:#5d6672;
-    --visible:#4ade80; --blurred:#f2b544; --rec:#ef4444; --info:#9fb4ff;
-    --r:12px; --ease:cubic-bezier(.2,.7,.2,1);
+    --blue:#0866ff; --blue-deep:#0047e0; --blue-ink:#0a3bd1; --ink:#1c2b33; --ink-2:#465a69; --muted:#8595a4;
+    --line:#e4e9ef; --card:#ffffff; --soft:#f2f6fb; --ok:#15a35a; --warn:#e8930c; --rec:#e5383b;
+    --r:14px; --ease:cubic-bezier(.22,.61,.36,1); --ease-out:cubic-bezier(.16,1,.3,1); --lux:cubic-bezier(.65,0,.15,1);
+    --font:"SF Pro Display","SF Pro Text",-apple-system,BlinkMacSystemFont,"Helvetica Neue","Segoe UI",system-ui,sans-serif;
   }
   * { box-sizing:border-box; }
   html, body { height:100%; }
-  body { margin:0; background:var(--bg); color:var(--text);
-         font:13.5px/1.45 "SF Pro Text",-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",system-ui,sans-serif;
-         -webkit-font-smoothing:antialiased; }
-  .num { font-variant-numeric:tabular-nums; font-family:"SF Mono",ui-monospace,Menlo,monospace; font-size:12px; }
+  body { margin:0; font:14px/1.45 var(--font); color:#fff; -webkit-font-smoothing:antialiased; overflow-x:hidden;
+         background:var(--blue); }
+  .num { font-variant-numeric:tabular-nums; }
 
-  /* header */
-  header { height:56px; display:flex; align-items:center; gap:14px; padding:0 20px; border-bottom:1px solid var(--line); }
-  .brand { display:flex; align-items:center; gap:10px; font-weight:600; letter-spacing:.01em; font-size:15px; }
-  .brand svg { display:block; }
-  .chips { display:flex; gap:8px; margin-left:12px; flex-wrap:nowrap; min-width:0; overflow:hidden; }
-  .chip > span:last-child { max-width:220px; overflow:hidden; text-overflow:ellipsis; }
-  @media (max-width:1180px) { header .sub { display:none; } }
-  .chip { display:inline-flex; align-items:center; gap:7px; height:26px; padding:0 10px; border:1px solid var(--line2);
-          border-radius:999px; color:var(--muted); font-size:12px; white-space:nowrap; transition:color .3s, border-color .3s; }
-  .dot { width:7px; height:7px; border-radius:50%; background:var(--faint); transition:background .3s; }
-  .chip.on { color:var(--text); } .chip.on .dot { background:var(--visible); }
-  .chip.warn .dot { background:var(--blurred); } .chip.rec { color:var(--text); border-color:#4a2224; }
-  .chip.rec .dot { background:var(--rec); animation:blink 1.2s steps(2,start) infinite; }
-  .spacer { flex:1; }
-  .sub { color:var(--faint); font-size:12px; }
+  /* ---------- living blue field (shared by splash and app) ---------- */
+  .field { position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none;
+           background:radial-gradient(120% 90% at 50% 40%, #1f7bff 0%, #0866ff 38%, #0052f0 70%, #0040d8 100%); }
+  .field i { position:absolute; border-radius:50%; filter:blur(60px); opacity:.55; mix-blend-mode:screen; }
+  .field i:nth-child(1) { width:62vw; height:42vw; left:-8vw; top:-12vw; background:radial-gradient(closest-side,#5aa2ff,transparent); animation:drift1 26s var(--ease) infinite alternate; }
+  .field i:nth-child(2) { width:56vw; height:40vw; right:-14vw; bottom:-16vw; background:radial-gradient(closest-side,#3d8bff,transparent); animation:drift2 30s var(--ease) infinite alternate; }
+  .field i:nth-child(3) { width:40vw; height:26vw; left:30vw; top:34vw; background:radial-gradient(closest-side,#0a3bd1,transparent); opacity:.5; mix-blend-mode:multiply; animation:drift3 34s var(--ease) infinite alternate; }
+  .ring { position:absolute; left:50%; top:46%; width:min(118vw,1500px); aspect-ratio:2.05; transform:translate(-50%,-50%) rotate(-8deg); opacity:.0; }
+  .ring svg { width:100%; height:100%; overflow:visible; }
+  .ring .trace { fill:none; stroke:url(#ribbon); stroke-width:2.2; stroke-linecap:round; filter:url(#soft); }
+  .ring .halo { fill:none; stroke:rgba(255,255,255,.22); stroke-width:46; filter:url(#wide); }
+  @keyframes drift1 { to { transform:translate(10vw,6vw) scale(1.12); } }
+  @keyframes drift2 { to { transform:translate(-12vw,-5vw) scale(1.08); } }
+  @keyframes drift3 { to { transform:translate(-8vw,-4vw) scale(1.2); } }
 
-  /* layout */
-  main { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:16px; padding:16px 20px 20px; max-width:1480px; margin:0 auto; }
-  @media (max-width:1000px) { main { grid-template-columns:1fr; } }
-  .card { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); }
-  .card h3 { margin:0; font-size:11px; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
-  .card .hd { display:flex; align-items:center; justify-content:space-between; padding:12px 14px 0; }
-  .card .bd { padding:12px 14px 14px; }
-  .stack { display:flex; flex-direction:column; gap:16px; min-width:0; }
+  /* ---------- splash / logo reveal ---------- */
+  .splash { position:fixed; inset:0; z-index:20; display:grid; place-items:center; cursor:pointer; outline:none; }
+  .splash .stack { display:flex; flex-direction:column; align-items:center; transform:translateY(-2vh); }
+  .mark { width:min(31vw,420px); color:#fff; position:relative; }
+  .mark svg { display:block; width:100%; height:auto; overflow:visible; }
+  .mark .g { opacity:0; filter:blur(14px); transform:translateY(10px) scale(1.035); transform-box:fill-box; transform-origin:50% 60%; }
+  .splash.play .mark .g { animation:glyph 2.4s var(--lux) forwards; }
+  .splash.play .mark .g1 { animation-delay:.16s; } .splash.play .mark .g2 { animation-delay:.32s; } .splash.play .mark .g3 { animation-delay:.48s; }
+  .mark .sheen { position:absolute; inset:-20% -10%; pointer-events:none; opacity:0;
+                 background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.9) 50%,transparent 65%);
+                 mix-blend-mode:overlay; transform:translateX(-60%); }
+  .splash.play .mark .sheen { animation:sheen 2.2s var(--ease) 3.1s forwards; }
+  .tag { margin-top:clamp(14px,2.2vh,22px); font-size:clamp(15px,1.45vw,20px); font-weight:600; letter-spacing:.005em; opacity:0; transform:translateY(8px); }
+  .enter { margin-top:clamp(40px,7vh,72px); font-size:13px; letter-spacing:.12em; opacity:0; color:rgba(255,255,255,.78); }
+  .motto { position:absolute; bottom:clamp(36px,10vh,84px); left:0; right:0; text-align:center; font-size:13px; letter-spacing:.14em; opacity:0; color:rgba(255,255,255,.86); }
+  .splash.play .tag { animation:rise 1.6s var(--ease-out) 3.2s forwards; }
+  .splash.play .motto { animation:fade 2s var(--ease) 3.9s forwards; }
+  .splash.play .enter { animation:fade 1.4s var(--ease) 4.8s forwards, breathe 3.6s var(--ease) 6.2s infinite; }
+  .splash.leaving { pointer-events:none; }
+  .splash.leaving .tag, .splash.leaving .enter, .splash.leaving .motto { animation:none; opacity:0; transition:opacity .5s var(--ease); }
+  .splash.gone { display:none; }
+  .field.reveal .ring { animation:ringIn 3.4s var(--lux) .4s forwards; }
+  .field.reveal .ring .trace { stroke-dasharray:2400; stroke-dashoffset:2400; animation:draw 3.2s var(--lux) .6s forwards; }
+  .field.calm .ring { opacity:.3; transition:opacity 1.6s var(--ease); }
+  @keyframes glyph { 0% { opacity:0; filter:blur(14px); transform:translateY(10px) scale(1.035); }
+                     55% { opacity:1; } 100% { opacity:1; filter:blur(0); transform:none; } }
+  @keyframes sheen { 0% { opacity:0; transform:translateX(-60%); } 15% { opacity:1; } 100% { opacity:0; transform:translateX(60%); } }
+  @keyframes rise { to { opacity:1; transform:none; } }
+  @keyframes fade { to { opacity:1; } }
+  @keyframes breathe { 0%,100% { opacity:1; } 50% { opacity:.45; } }
+  @keyframes ringIn { 0% { opacity:0; } 30% { opacity:1; } 100% { opacity:.85; } }
+  @keyframes draw { to { stroke-dashoffset:0; } }
 
-  /* viewer */
-  .viewer { position:relative; border-radius:var(--r); overflow:hidden; background:#000; aspect-ratio:4/3;
-            border:1px solid var(--line); transition:box-shadow .5s var(--ease); }
-  .viewer img { width:100%; height:100%; object-fit:contain; display:block; opacity:0; transition:opacity .5s var(--ease); }
+  /* ---------- app shell ---------- */
+  .app { position:relative; z-index:5; min-height:100vh; display:flex; flex-direction:column; opacity:0; }
+  .app.in { opacity:1; transition:opacity .9s var(--ease) .15s; }
+  header { height:72px; display:grid; grid-template-columns:1fr auto 1fr; align-items:center; padding:0 clamp(20px,5vw,64px);
+           border-bottom:1px solid rgba(255,255,255,.22); }
+  .brand { display:flex; align-items:center; gap:14px; }
+  .brand .hmark { width:152px; height:auto; color:#fff; opacity:0; }
+  .app.in .brand .hmark.show { opacity:1; }
+  .brand small { font-size:12.5px; font-weight:600; opacity:.92; white-space:nowrap; }
+  nav { display:flex; gap:40px; height:100%; }
+  nav button { position:relative; height:100%; border:0; background:none; color:rgba(255,255,255,.82); font:600 14.5px var(--font); cursor:pointer; padding:0 2px; }
+  nav button.on { color:#fff; }
+  nav button::after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:2.5px; border-radius:2px; background:#fff;
+                      transform:scaleX(0); transition:transform .45s var(--ease-out); }
+  nav button.on::after { transform:scaleX(1); }
+  .hright { display:flex; justify-content:flex-end; align-items:center; gap:22px; }
+  .icon-btn { width:36px; height:36px; border-radius:10px; border:0; background:transparent; color:#fff; cursor:pointer; display:grid; place-items:center;
+              transition:background .25s; }
+  .icon-btn:hover { background:rgba(255,255,255,.14); }
+  .device { display:flex; align-items:center; gap:9px; font-size:13.5px; font-weight:500; white-space:nowrap; max-width:260px; overflow:hidden; text-overflow:ellipsis; }
+  .ldot { width:9px; height:9px; border-radius:50%; background:rgba(255,255,255,.45); flex:none; transition:background .4s; }
+  .ldot.on { background:#3ddc84; box-shadow:0 0 0 0 rgba(61,220,132,.6); animation:ping 2.6s var(--ease) infinite; }
+  @keyframes ping { 0% { box-shadow:0 0 0 0 rgba(61,220,132,.55); } 70%,100% { box-shadow:0 0 0 8px rgba(61,220,132,0); } }
+
+  main { flex:1; width:100%; max-width:1280px; margin:0 auto; padding:26px clamp(20px,5vw,64px) 28px; }
+  .hero { display:flex; justify-content:space-between; align-items:flex-end; gap:20px; margin-bottom:24px; }
+  .eyebrow { font-size:12px; letter-spacing:.16em; text-transform:uppercase; opacity:.86; font-weight:500; }
+  h1 { margin:8px 0 0; font-size:clamp(28px,3.1vw,40px); line-height:1.08; letter-spacing:-.022em; font-weight:700; }
+  .cta { height:50px; padding:0 28px; border:0; border-radius:12px; background:#fff; color:var(--blue); font:700 15px var(--font); cursor:pointer;
+         display:inline-flex; align-items:center; gap:10px; box-shadow:0 10px 30px -12px rgba(0,22,90,.55);
+         transition:transform .25s var(--ease-out), box-shadow .25s; white-space:nowrap; }
+  .cta:hover { transform:translateY(-1px); box-shadow:0 14px 34px -12px rgba(0,22,90,.6); }
+  .cta:active { transform:translateY(0); }
+  .cta .rd { width:9px; height:9px; border-radius:50%; background:var(--rec); display:none; }
+  .cta.rec .rd { display:block; animation:breathe 1.4s steps(2,start) infinite; }
+  .ghost { height:50px; padding:0 18px; border:1px solid rgba(255,255,255,.5); border-radius:12px; background:transparent; color:#fff; font:600 14px var(--font); cursor:pointer; margin-right:10px; transition:background .25s; }
+  .ghost:hover { background:rgba(255,255,255,.12); }
+
+  .grid { display:grid; grid-template-columns:minmax(0,1fr) 370px; gap:18px; align-items:start; }
+  @media (max-width:1040px) { .grid { grid-template-columns:1fr; } nav { gap:22px; } .brand small { display:none; } }
+  .card { background:var(--card); color:var(--ink); border-radius:var(--r); box-shadow:0 18px 50px -28px rgba(0,20,80,.55); overflow:hidden; }
+  .rise { opacity:0; transform:translateY(16px); }
+  .app.in .rise { animation:rise .9s var(--ease-out) forwards; }
+  .app.in .rise.d1 { animation-delay:.12s; } .app.in .rise.d2 { animation-delay:.22s; } .app.in .rise.d3 { animation-delay:.32s; } .app.in .rise.d4 { animation-delay:.42s; }
+  .stackcol { display:flex; flex-direction:column; gap:12px; min-width:0; }
+
+  /* preview */
+  .chead { display:flex; align-items:center; gap:10px; padding:13px 16px; font-weight:600; font-size:14.5px; }
+  .live { display:inline-flex; align-items:center; gap:7px; color:var(--ink-2); font-weight:500; font-size:13.5px; }
+  .live .ldot { background:#c5ced8; } .live.on .ldot { background:#2bc46b; animation:ping 2.6s var(--ease) infinite; }
+  .chead .sp { flex:1; }
+  .pill-s { font-size:12px; color:var(--muted); font-weight:500; }
+  .viewer { position:relative; width:100%; aspect-ratio:4/3; max-height:62vh; background:#0b1220; overflow:hidden; }
+  .viewer img { width:100%; height:100%; object-fit:contain; display:block; opacity:0; transition:opacity .8s var(--ease); }
   .viewer img.live { opacity:1; }
-  .viewer.flash-blur { box-shadow:0 0 0 2px var(--blurred); } .viewer.flash-visible { box-shadow:0 0 0 2px var(--visible); }
-  .corner { position:absolute; width:22px; height:22px; border-color:rgba(255,255,255,.55); border-style:solid; pointer-events:none; }
-  .corner.tl { top:12px; left:12px; border-width:1.5px 0 0 1.5px; } .corner.tr { top:12px; right:12px; border-width:1.5px 1.5px 0 0; }
-  .corner.bl { bottom:12px; left:12px; border-width:0 0 1.5px 1.5px; } .corner.br { bottom:12px; right:12px; border-width:0 1.5px 1.5px 0; }
-  .hud { position:absolute; display:flex; gap:10px; align-items:center; padding:5px 9px; border-radius:7px;
-         background:rgba(10,12,15,.62); backdrop-filter:blur(6px); color:#dfe3e8; font-size:11.5px; }
-  .hud.tl { top:16px; left:42px; } .hud.tr { top:16px; right:42px; } .hud.bl { bottom:16px; left:42px; }
-  .hud .sep { width:1px; height:11px; background:rgba(255,255,255,.18); }
-  /* face overlay: follows each tracked face (state drawn by the page, not burned into video) */
-  .faces { position:absolute; inset:0; pointer-events:none; overflow:hidden; }
-  .face { position:absolute; left:0; top:0; --c:rgba(231,233,236,.55);
-          transition:transform .12s linear, width .12s linear, height .12s linear, opacity .3s var(--ease); will-change:transform; }
-  .face.p { --c:var(--blurred); } .face.u { --c:var(--info); } .face.out { opacity:0; }
-  .face i { position:absolute; width:12px; height:12px; border:0 solid var(--c); transition:border-color .3s; }
-  .face i:nth-child(1) { left:0; top:0; border-width:1.5px 0 0 1.5px; } .face i:nth-child(2) { right:0; top:0; border-width:1.5px 1.5px 0 0; }
-  .face i:nth-child(3) { left:0; bottom:0; border-width:0 0 1.5px 1.5px; } .face i:nth-child(4) { right:0; bottom:0; border-width:0 1.5px 1.5px 0; }
-  .face b { position:absolute; left:0; bottom:calc(100% + 6px); display:inline-flex; align-items:center; gap:6px; white-space:nowrap;
-            padding:3px 7px; border-radius:5px; background:rgba(10,12,15,.74); backdrop-filter:blur(4px);
-            font:600 10px/1.2 "SF Mono",ui-monospace,Menlo,monospace; letter-spacing:.06em; color:var(--c); transition:color .3s; }
-  .face b::before { content:""; width:5px; height:5px; border-radius:50%; background:var(--c); }
-  .face .hold { position:absolute; left:0; right:0; bottom:-6px; height:2px; background:rgba(255,255,255,.12); border-radius:2px; overflow:hidden; opacity:0; transition:opacity .2s; }
-  .face .hold span { display:block; height:100%; width:0; background:var(--c); transition:width .12s linear; }
+  .idle { position:absolute; inset:0; display:grid; place-items:center; text-align:center; color:#c9d4e2; background:linear-gradient(180deg,#0f1a2e,#0b1220); }
+  .idle b { display:block; color:#fff; font-weight:600; font-size:17px; margin-bottom:6px; letter-spacing:-.01em; }
+  .idle .btn-in { margin-top:16px; }
+  .banner { display:none; padding:8px 16px; font-size:12.5px; color:#8a5a00; background:#fff6e5; border-top:1px solid #f3e2bd; }
+
+  /* face overlay (page-drawn, never in the recording) */
+  .faces { position:absolute; inset:0; pointer-events:none; }
+  .face { position:absolute; left:0; top:0; transition:transform .12s linear, width .12s linear, height .12s linear, opacity .3s var(--ease); }
+  .face.out { opacity:0; }
+  .face .frame { position:absolute; inset:0; border-radius:42%; border:1.5px solid rgba(255,255,255,.55); transition:border-color .4s; }
+  .face.p .frame { border-color:rgba(8,102,255,.95); box-shadow:0 0 0 3px rgba(8,102,255,.22); }
+  .face.u .frame { border-style:dashed; border-color:rgba(255,255,255,.8); }
+  .face b { position:absolute; left:50%; bottom:calc(100% + 8px); transform:translateX(-50%); white-space:nowrap; display:inline-flex; align-items:center; gap:6px;
+            padding:4px 10px; border-radius:999px; font:600 11.5px var(--font); background:rgba(255,255,255,.94); color:var(--ink);
+            box-shadow:0 6px 18px -8px rgba(0,0,0,.45); transition:background .4s, color .4s; }
+  .face.p b { background:var(--blue); color:#fff; }
+  .face .hold { position:absolute; left:15%; right:15%; bottom:-9px; height:3px; border-radius:3px; background:rgba(255,255,255,.25); overflow:hidden; opacity:0; transition:opacity .2s; }
+  .face .hold span { display:block; height:100%; width:0; background:#fff; transition:width .12s linear; }
   .face .hold.on { opacity:1; }
-  .bodyx { position:absolute; left:0; top:0; border:1px dashed var(--c); border-radius:14px; opacity:.32; --c:rgba(231,233,236,.55);
-           transition:transform .12s linear, width .12s linear, height .12s linear, opacity .3s var(--ease), border-color .3s; }
-  .bodyx.p { --c:var(--blurred); opacity:.45; } .bodyx.out { opacity:0; }
-  .mic { display:inline-flex; align-items:flex-end; gap:2px; height:11px; margin-left:2px; }
-  .mic i { width:2px; border-radius:1px; background:var(--faint); height:2px; transition:height .1s linear, background .2s; }
-  .chip.on .mic i.lit { background:var(--visible); }
-  .idle { position:absolute; inset:0; display:grid; place-items:center; text-align:center; color:var(--muted); }
-  .idle b { display:block; color:var(--text); font-weight:500; font-size:15px; margin-bottom:4px; }
-  .scan { position:absolute; left:0; right:0; height:1px; background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
-          top:0; animation:scan 3.2s var(--ease) infinite; opacity:.6; }
-  .toast { position:absolute; left:50%; top:16px; transform:translate(-50%,-10px); opacity:0; pointer-events:none;
-           padding:9px 14px 10px; border-radius:9px; background:rgba(17,20,25,.92); border:1px solid var(--line2);
-           font-size:13px; display:flex; align-items:center; gap:9px; transition:opacity .25s var(--ease), transform .35s var(--ease); }
-  .toast.show { opacity:1; transform:translate(-50%,0); }
-  .toast i { width:8px; height:8px; border-radius:50%; }
-  .toast .bar { position:absolute; left:10px; right:10px; bottom:3px; height:2px; border-radius:2px; background:currentColor; opacity:.35;
-                transform-origin:left; }
-  .toast.show .bar { animation:drain 2.6s linear forwards; }
-  .banner { margin-top:10px; padding:8px 12px; border-radius:8px; border:1px solid #4a3b16; color:var(--blurred); background:#1a160c; font-size:12px; display:none; }
+  .bodyx { position:absolute; left:0; top:0; border:1px dashed rgba(255,255,255,.35); border-radius:22px; transition:transform .12s linear, width .12s linear, height .12s linear, opacity .3s; }
+  .bodyx.p { border-color:rgba(8,102,255,.6); } .bodyx.out { opacity:0; }
 
-  /* controls */
-  .controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-top:12px; }
-  select, button { font:inherit; color:var(--text); }
-  select { height:34px; padding:0 30px 0 10px; border-radius:8px; border:1px solid var(--line2); background:var(--raised);
-           appearance:none; background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
-           background-position:calc(100% - 15px) 15px, calc(100% - 10px) 15px; background-size:5px 5px; background-repeat:no-repeat; max-width:280px; }
-  .btn { height:34px; padding:0 14px; border-radius:8px; border:1px solid var(--line2); background:var(--raised); cursor:pointer;
-         transition:background .2s, border-color .2s, transform .12s; display:inline-flex; align-items:center; gap:8px; }
-  .btn:hover { border-color:#3b4450; } .btn:active { transform:translateY(1px); }
-  .btn.primary { background:var(--text); color:#0a0c0f; border-color:var(--text); font-weight:600; }
-  .btn.primary:hover { background:#fff; }
-  .btn.recbtn .rd { width:9px; height:9px; border-radius:50%; background:var(--rec); transition:border-radius .2s; }
-  .btn.recbtn.on .rd { border-radius:2px; }
-  .seg { display:inline-flex; padding:3px; border:1px solid var(--line2); border-radius:9px; background:var(--raised); position:relative; }
-  .seg button { position:relative; z-index:1; height:26px; padding:0 11px; border:0; background:transparent; color:var(--muted); cursor:pointer;
-                font-size:12px; border-radius:6px; transition:color .2s; }
-  .seg button.on { color:var(--text); }
-  .seg .thumb { position:absolute; top:3px; bottom:3px; border-radius:6px; background:#262c35; transition:left .3s var(--ease), width .3s var(--ease); }
-  .toggle { display:inline-flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; cursor:pointer; user-select:none; }
-  .toggle input { display:none; }
-  .toggle .sw { width:28px; height:16px; border-radius:16px; background:var(--line2); position:relative; transition:background .2s; }
-  .toggle .sw::after { content:""; position:absolute; top:2px; left:2px; width:12px; height:12px; border-radius:50%; background:#cfd4da; transition:transform .25s var(--ease); }
-  .toggle input:checked + .sw { background:#3c6e4f; } .toggle input:checked + .sw::after { transform:translateX(12px); }
-
-  /* gestures legend */
-  .legend { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
-  .lg { display:flex; gap:10px; align-items:flex-start; padding:10px; border:1px solid var(--line); border-radius:10px; background:var(--raised); }
-  .lg svg { flex:none; color:var(--muted); }
-  .lg b { display:block; font-weight:500; font-size:12.5px; } .lg span { color:var(--muted); font-size:11.5px; }
-
-  /* people */
-  .person { display:grid; grid-template-columns:1fr auto; gap:8px; padding:10px 0; border-top:1px solid var(--line); }
-  .enter { animation:in .35s var(--ease); }
-  .person:first-child { border-top:0; padding-top:0; }
-  .pid { font-weight:500; display:flex; align-items:center; gap:8px; }
-  .state { display:inline-flex; align-items:center; gap:6px; height:22px; padding:0 8px; border-radius:6px; font-size:11px; font-weight:600;
-           letter-spacing:.04em; border:1px solid; transition:color .35s, border-color .35s, background .35s; }
-  .s-UNKNOWN { color:var(--muted); border-color:var(--line2); }
-  .s-DENIED, .s-REVOKED { color:var(--blurred); border-color:#5a4416; background:#1c170b; }
-  .s-GRANTED { color:var(--visible); border-color:#1f4a31; background:#0d1a12; }
-  .s-UNCERTAIN { color:var(--info); border-color:#2d3a63; background:#10141f; }
-  .note { color:var(--faint); font-size:11.5px; margin-top:3px; }
-  .rings { display:flex; gap:8px; align-items:center; }
-  .ring { position:relative; width:30px; height:30px; } .ring svg { transform:rotate(-90deg); }
-  .ring circle { fill:none; stroke-width:3; } .ring .bg { stroke:var(--line2); }
-  .ring .fg { stroke:var(--blurred); stroke-linecap:round; transition:stroke-dashoffset .25s linear; }
-  .ring.peace .fg { stroke:var(--visible); }
-  .ring .ic { position:absolute; inset:0; display:grid; place-items:center; color:var(--faint); font-size:9px; font-weight:700; letter-spacing:.02em; }
-  .ring.active .ic { color:var(--text); }
-  .empty { color:var(--faint); font-size:12.5px; padding:6px 0; }
-
-  /* timeline */
-  .tl { max-height:240px; overflow:auto; margin:0; padding:0; list-style:none; }
-  .tl li { display:grid; grid-template-columns:52px 10px 1fr; gap:8px; align-items:baseline; padding:5px 0; }
-  .tl li.fresh { animation:in .35s var(--ease), glow 1.6s var(--ease); border-radius:6px; }
-  .tl .t { color:var(--faint); } .tl .k { width:7px; height:7px; border-radius:50%; background:var(--faint); align-self:center; }
-  .tl .k.blur { background:var(--blurred); } .tl .k.vis { background:var(--visible); } .tl .k.sys { background:var(--info); } .tl .k.err { background:var(--rec); }
-  .tl .w { color:var(--muted); } .tl .w b { color:var(--text); font-weight:500; }
-
-  /* diagnostics */
-  details summary { list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:space-between; padding:12px 14px; }
-  details summary::-webkit-details-marker { display:none; }
-  details summary .chev { transition:transform .25s var(--ease); color:var(--muted); }
-  details[open] summary .chev { transform:rotate(90deg); }
-  .kv { display:grid; grid-template-columns:auto 1fr; gap:6px 14px; padding:0 14px 14px; font-size:12px; }
-  .kv dt { color:var(--muted); } .kv dd { margin:0; text-align:right; }
-  .un { color:var(--faint); }
-  .sparks { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:0 14px 12px; }
-  .spark { border:1px solid var(--line); border-radius:8px; padding:8px 10px; background:var(--raised); }
-  .spark .lbl { color:var(--muted); font-size:11px; display:flex; justify-content:space-between; }
-  .spark svg { width:100%; height:34px; display:block; margin-top:4px; }
-  .spark path { fill:none; stroke:#9aa6b6; stroke-width:1.5; }
+  /* people strip */
+  .people { display:flex; flex-wrap:wrap; gap:8px 40px; padding:14px 22px; min-height:62px; align-items:center; }
+  .person { display:flex; align-items:center; gap:12px; }
+  .person.enter { animation:rise .6s var(--ease-out); }
+  .avatar { position:relative; width:38px; height:38px; border-radius:50%; background:#e8effa; display:grid; place-items:center; color:var(--blue); flex:none; }
+  .avatar svg.ring2 { position:absolute; inset:-3px; width:44px; height:44px; transform:rotate(-90deg); }
+  .avatar svg.ring2 circle { fill:none; stroke:var(--blue); stroke-width:2.5; stroke-linecap:round; transition:stroke-dashoffset .15s linear, opacity .2s; }
+  .pname { font-weight:600; font-size:14.5px; color:var(--ink); }
+  .state { display:inline-flex; align-items:center; height:26px; padding:0 12px; border-radius:999px; font-size:12.5px; font-weight:600;
+           background:#eef1f5; color:var(--ink-2); transition:background .45s var(--ease), color .45s var(--ease); white-space:nowrap; }
+  .state.p { background:var(--blue); color:#fff; } .state.g { background:#e7f7ee; color:#0e7a43; } .state.u { background:#fff4e0; color:#9a6200; }
+  .empty { color:var(--muted); font-size:13.5px; }
 
   /* recordings */
-  .rec { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 0; border-top:1px solid var(--line); }
-  .rec:first-child { border-top:0; }
-  .rec .meta { color:var(--muted); font-size:11.5px; }
-  .player { margin-top:10px; display:none; } .player.show { display:block; animation:in .35s var(--ease); }
-  .player video { width:100%; border-radius:8px; border:1px solid var(--line); background:#000; }
-  a { color:var(--info); text-decoration:none; }
+  .rec-card .chead { padding-bottom:4px; }
+  .rows { padding:4px 22px 12px; }
+  .row { display:grid; grid-template-columns:1fr auto 40px; align-items:center; gap:12px; padding:11px 0; border-top:1px solid var(--line); font-size:14px; }
+  .row:first-child { border-top:0; }
+  .row .t { color:var(--ink-2); }
+  .row a, .row .lock { width:34px; height:34px; display:grid; place-items:center; border-radius:9px; color:var(--blue); transition:background .2s; }
+  .row a:hover { background:#edf3ff; } .row .lock { color:var(--muted); }
+  .row .sub { display:block; font-size:12px; color:var(--muted); }
+  .player { display:none; padding:0 22px 18px; } .player.show { display:block; animation:rise .5s var(--ease-out); }
+  .player video { width:100%; border-radius:10px; background:#000; }
 
-  @keyframes blink { to { opacity:.25; } }
-  @keyframes scan { 0% { top:0; } 100% { top:100%; } }
-  @keyframes drain { from { transform:scaleX(1); } to { transform:scaleX(0); } }
-  @keyframes in { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
-  @keyframes glow { 0% { background:rgba(242,181,68,.10); } 100% { background:transparent; } }
-  @media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
+  /* privacy controls */
+  .side { padding:26px 28px 24px; }
+  .side h2 { margin:0 0 20px; font-size:21px; letter-spacing:-.015em; font-weight:700; color:var(--ink); }
+  .ctl { display:grid; grid-template-columns:48px 1fr; gap:16px; align-items:center; padding:12px 10px; margin:0 -10px; border-radius:12px; transition:background .35s var(--ease); }
+  .ctl .ic { color:var(--blue); width:44px; height:44px; display:grid; place-items:center; }
+  .ctl b { display:block; font-size:15px; color:var(--ink); }
+  .ctl span { font-size:13.5px; color:var(--ink-2); }
+  .ctl.active { background:#eef4ff; }
+  .ctl .meter { height:3px; margin-top:7px; border-radius:3px; background:#dfe8f7; overflow:hidden; display:none; }
+  .ctl.active .meter { display:block; } .ctl .meter i { display:block; height:100%; width:0; background:var(--blue); transition:width .12s linear; }
+  hr.div { border:0; border-top:1px solid var(--line); margin:18px 0 20px; }
+  .vlabel { display:flex; justify-content:space-between; align-items:center; font-weight:600; font-size:15px; color:var(--ink); }
+  .mic { display:inline-flex; align-items:flex-end; gap:2px; height:14px; }
+  .mic i { width:3px; border-radius:2px; background:#c9d6ea; height:3px; transition:height .1s linear, background .2s; }
+  .mic.on i.lit { background:var(--blue); }
+  .vquote { margin:12px 0 10px; font-size:21px; font-weight:700; letter-spacing:-.015em; color:var(--ink); min-height:28px; transition:opacity .4s; }
+  .vstatus { display:flex; align-items:center; gap:9px; color:var(--blue); font-weight:500; font-size:14px; }
+  .vstatus .ldot { background:var(--blue); }
+  .vstatus.idle-s { color:var(--muted); } .vstatus.idle-s .ldot { background:#c5ced8; }
+  .vstatus.warn { color:#9a6200; } .vstatus.warn .ldot { background:var(--warn); }
+  .foot { margin:14px 2px 0; font-size:12.5px; opacity:.85; }
+
+  /* recordings tab */
+  .tab { display:none; } .tab.on { display:block; }
+  .tl { list-style:none; margin:0; padding:6px 22px 18px; max-height:420px; overflow:auto; }
+  .tl li { display:grid; grid-template-columns:62px 12px 1fr; gap:10px; align-items:baseline; padding:8px 0; border-top:1px solid var(--line); color:var(--ink-2); font-size:13.5px; }
+  .tl li:first-child { border-top:0; } .tl li.fresh { animation:rise .5s var(--ease-out); }
+  .tl .k { width:8px; height:8px; border-radius:50%; background:#c5ced8; align-self:center; }
+  .tl .k.blur { background:var(--blue); } .tl .k.vis { background:#2bc46b; } .tl .k.err { background:var(--rec); }
+  .tl b { color:var(--ink); font-weight:600; }
+
+  /* settings drawer */
+  .scrim { position:fixed; inset:0; background:rgba(4,16,48,.38); z-index:30; opacity:0; pointer-events:none; transition:opacity .35s var(--ease); }
+  .scrim.on { opacity:1; pointer-events:auto; }
+  .drawer { position:fixed; top:0; right:0; bottom:0; width:min(420px,92vw); background:#fff; color:var(--ink); z-index:31; transform:translateX(102%);
+            transition:transform .5s var(--ease-out); display:flex; flex-direction:column; box-shadow:-30px 0 60px -30px rgba(0,20,80,.5); }
+  .drawer.on { transform:none; }
+  .drawer .dh { display:flex; justify-content:space-between; align-items:center; padding:20px 24px; border-bottom:1px solid var(--line); font-weight:700; font-size:17px; }
+  .drawer .db { padding:18px 24px 28px; overflow:auto; }
+  .drawer label.f { display:block; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin:18px 0 8px; font-weight:600; }
+  .drawer select { width:100%; height:42px; border-radius:10px; border:1px solid var(--line); background:var(--soft); padding:0 12px; font:500 14px var(--font); color:var(--ink); }
+  .seg { display:flex; padding:3px; border-radius:11px; background:var(--soft); border:1px solid var(--line); position:relative; }
+  .seg button { flex:1; height:34px; border:0; background:transparent; font:600 13px var(--font); color:var(--ink-2); border-radius:8px; position:relative; z-index:1; cursor:pointer; transition:color .25s; }
+  .seg button.on { color:var(--blue); }
+  .seg .thumb { position:absolute; top:3px; bottom:3px; border-radius:8px; background:#fff; box-shadow:0 2px 8px -3px rgba(0,30,90,.25); transition:left .35s var(--ease-out), width .35s var(--ease-out); }
+  .switch { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .switch input { display:none; }
+  .switch .sw { width:40px; height:24px; border-radius:24px; background:#d5dde7; position:relative; cursor:pointer; transition:background .25s; }
+  .switch .sw::after { content:""; position:absolute; top:3px; left:3px; width:18px; height:18px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.2); transition:transform .3s var(--ease-out); }
+  .switch input:checked + .sw { background:var(--blue); } .switch input:checked + .sw::after { transform:translateX(16px); }
+  .kv { display:grid; grid-template-columns:auto 1fr; gap:7px 16px; font-size:13px; } .kv dt { color:var(--muted); } .kv dd { margin:0; text-align:right; }
+  .un { color:#b3bfcc; }
+  .dbtn { width:100%; height:42px; border-radius:10px; border:1px solid var(--line); background:#fff; color:var(--rec); font:600 14px var(--font); cursor:pointer; margin-top:14px; }
+
+  /* toast */
+  .toast { position:fixed; left:50%; top:86px; z-index:40; transform:translate(-50%,-12px); opacity:0; pointer-events:none;
+           background:#fff; color:var(--ink); border-radius:12px; padding:12px 18px; font-weight:500; font-size:14px; display:flex; align-items:center; gap:10px;
+           box-shadow:0 20px 50px -20px rgba(0,20,80,.6); transition:opacity .3s var(--ease), transform .45s var(--ease-out); max-width:min(560px,92vw); }
+  .toast.show { opacity:1; transform:translate(-50%,0); }
+  .toast i { width:9px; height:9px; border-radius:50%; flex:none; }
+
+  @media (prefers-reduced-motion:reduce) {
+    *, *::before, *::after { animation-duration:.01ms !important; animation-delay:0s !important; transition-duration:.01ms !important; }
+    .mark .g { opacity:1; filter:none; transform:none; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <div class="brand">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <ellipse cx="12" cy="12" rx="9" ry="10" stroke="#e7e9ec" stroke-width="1.6"/>
-      <ellipse cx="12" cy="12" rx="4.2" ry="5" fill="#e7e9ec" opacity=".18"/>
-      <path d="M3.5 12h17" stroke="#e7e9ec" stroke-width="1.6" stroke-linecap="round" opacity=".55"/>
-    </svg>
-    ConsentLens
-  </div>
-  <div class="chips">
-    <span class="chip" id="cSrc"><span class="dot"></span><span>No session</span></span>
-    <span class="chip" id="cOut"><span class="dot"></span><span>Output —</span></span>
-    <span class="chip" id="cRec"><span class="dot"></span><span>Not recording</span></span>
-    <span class="chip" id="cVoice" title="Voice commands (transcripts are never shown or stored)"><span class="dot"></span><span class="mic" id="mic"><i></i><i></i><i></i><i></i></span><span>Voice —</span></span>
-  </div>
-  <div class="spacer"></div>
-  <span class="sub">Camera stands in for Meta glasses · processing on this Mac</span>
-</header>
+<div class="field" id="field">
+  <i></i><i></i><i></i>
+  <div class="ring"><svg viewBox="0 0 1000 488" preserveAspectRatio="none">
+    <defs>
+      <linearGradient id="ribbon" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".35" stop-color="#fff" stop-opacity=".95"/>
+        <stop offset=".7" stop-color="#cfe2ff" stop-opacity=".7"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+      </linearGradient>
+      <filter id="soft"><feGaussianBlur stdDeviation="1.2"/></filter>
+      <filter id="wide"><feGaussianBlur stdDeviation="22"/></filter>
+    </defs>
+    <ellipse class="halo" cx="500" cy="244" rx="430" ry="190"/>
+    <ellipse class="trace" cx="500" cy="244" rx="430" ry="190" pathLength="2400"/>
+  </svg></div>
+</div>
 
-<main>
+<!-- ============ logo reveal ============ -->
+<div class="splash" id="splash" tabindex="0" role="button" aria-label="Enter Consent">
   <div class="stack">
-    <div>
-      <div class="viewer" id="viewer">
-        <img id="preview" alt="Protected live output">
-        <div class="faces" id="faces"></div>
-        <div class="idle" id="idle"><div><b>No active session</b>Choose a camera and start a session.<div class="scan"></div></div></div>
-        <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
-        <div class="hud tl" id="hudL" style="display:none"><span>PROTECTED OUTPUT</span><span class="sep"></span><span id="hudSrc"></span></div>
-        <div class="hud tr" id="hudR" style="display:none"><span class="num" id="hudRec"></span></div>
-        <div class="hud bl num" id="hudB" style="display:none"></div>
-        <div class="toast" id="toast"><i id="toastDot"></i><span id="toastText"></span><span class="bar"></span></div>
-      </div>
-      <div class="banner" id="testBanner">Test input — replayed file, not the live camera.</div>
-      <div class="controls">
-        <select id="srcSel" title="Input source"></select>
-        <button class="btn primary" id="bSession">Start session</button>
-        <button class="btn recbtn" id="bRec" disabled><span class="rd"></span><span>Record</span></button>
-        <div class="seg" id="seg"><span class="thumb"></span>
-          <button data-p="ECO">Eco</button><button data-p="BALANCED">Balanced</button><button data-p="QUALITY">Quality</button>
-        </div>
-        <label class="toggle"><input type="checkbox" id="cues" checked><span class="sw"></span>Audio cues</label>
-      </div>
+    <div class="mark" id="mark"><span class="sheen"></span></div>
+    <div class="tag">Powered by Meta AI</div>
+    <div class="enter">Touch to enter</div>
+  </div>
+  <div class="motto">Your visibility. Your choice.</div>
+</div>
+
+<!-- ============ app ============ -->
+<div class="app" id="app" aria-hidden="true">
+  <header>
+    <div class="brand"><div class="hmark" id="hmark"></div><small>Powered by Meta AI</small></div>
+    <nav><button class="on" data-tab="live">Live session</button><button data-tab="recs">Recordings</button></nav>
+    <div class="hright">
+      <button class="icon-btn" id="bSettings" title="Settings" aria-label="Settings">
+        <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+      <div class="device"><span class="ldot" id="devDot"></span><span id="devName">No camera</span></div>
+    </div>
+  </header>
+
+  <main>
+    <div class="hero rise">
+      <div><div class="eyebrow" id="eyebrow">Live session</div><h1>Your visibility. Your choice.</h1></div>
+      <div><button class="ghost" id="bEnd" style="display:none">End session</button><button class="cta" id="bMain"><span class="rd"></span><span id="bMainT">Start session</span></button></div>
     </div>
 
-    <div class="legend">
-      <div class="lg">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 12c2.5-3 5.5-4.5 9-4.5s6.5 1.5 9 4.5"/><path d="M5 13.5l-1 1.5M9 15l-.5 1.8M15 15l.5 1.8M19 13.5l1 1.5"/></svg>
-        <div><b>Close your eyes · 2 s</b><span>Blurs your face from that moment on.</span></div>
+    <div class="tab on" id="tab-live">
+      <div class="grid">
+        <div class="stackcol">
+          <section class="card rise d1">
+            <div class="chead">Protected preview <span class="live" id="liveTag"><span class="ldot"></span><span>Offline</span></span><span class="sp"></span><span class="pill-s num" id="perf"></span></div>
+            <div class="viewer" id="viewer">
+              <img id="preview" alt="Protected live output">
+              <div class="faces" id="faces"></div>
+              <div class="idle" id="idle"><div><b>Ready when you are</b>Connect your iPhone, then start a session.<div><button class="cta btn-in" id="bIdle">Start session</button></div></div></div>
+            </div>
+            <div class="banner" id="testBanner">Test input — replayed file, not the live camera.</div>
+          </section>
+          <section class="card rise d2"><div class="people" id="people"></div></section>
+          <section class="card rec-card rise d3">
+            <div class="chead">Recordings<span class="sp"></span><span class="pill-s" id="storage"></span></div>
+            <div class="rows" id="recs"><div class="row"><span class="empty">No recording yet.</span></div></div>
+            <div class="player" id="player"><video id="video" controls playsinline></video></div>
+          </section>
+        </div>
+
+        <section class="card side rise d2">
+          <h2>Privacy controls</h2>
+          <div class="ctl" id="ctlEyes">
+            <div class="ic"><svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 20c4.2-6.2 9.6-9.5 16-9.5S31.8 13.8 36 20c-4.2 6.2-9.6 9.5-16 9.5S8.2 26.2 4 20z"/><circle cx="20" cy="20" r="5"/><path d="M8 33 32 7"/></svg></div>
+            <div><b>Cover eyes</b><span>Hold to blur your face</span><div class="meter"><i></i></div></div>
+          </div>
+          <div class="ctl" id="ctlPeace">
+            <div class="ic"><svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21V7.5a2.5 2.5 0 0 1 5 0V19"/><path d="m20 19 3-11a2.5 2.5 0 0 1 4.8 1.3L25 21"/><path d="M15 21c-2-1.4-4.6-1-5.2.9-.6 1.8.7 3.3 2 5 2.4 3.1 5 5.6 9.3 5.6 4.8 0 7.4-3.6 7.4-8.2V21c0-1.6-1.2-2.6-2.6-2.6s-2.4 1-2.4 2.6"/></svg></div>
+            <div><b>Peace sign</b><span>Reveal your face</span><div class="meter"><i></i></div></div>
+          </div>
+          <div class="ctl" id="ctlVoice">
+            <div class="ic"><svg width="38" height="38" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="14" y="5" width="12" height="20" rx="6"/><path d="M9 19a11 11 0 0 0 22 0M20 30v5"/></svg></div>
+            <div><b>Use your voice</b><span>Say “Blur me” or “Unblur me”</span></div>
+          </div>
+          <hr class="div">
+          <div class="vlabel">Latest voice request <span class="mic" id="mic"><i></i><i></i><i></i><i></i><i></i></span></div>
+          <div class="vquote" id="vquote">—</div>
+          <div class="vstatus idle-s" id="vstatus"><span class="ldot"></span><span>Listening when a session is live</span></div>
+        </section>
       </div>
-      <div class="lg">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="12" rx="7" ry="8.5"/><path d="M4.5 11.5h15" stroke-width="3" opacity=".55"/></svg>
-        <div><b>Cover your eyes · 1.5 s</b><span>Same request, by hand.</span></div>
-      </div>
-      <div class="lg">
-        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 13V4.5a1.5 1.5 0 0 1 3 0V12M12 12l1.6-7.2a1.5 1.5 0 0 1 2.9.7L15 13"/><path d="M9 13c-1.2-.8-2.6-.6-3 .5s.4 2 1.2 3c1.4 1.8 3 3.5 5.8 3.5 3 0 4.5-2.2 4.5-5v-2.5"/></svg>
-        <div><b>Peace sign · 1 s</b><span>Unblurs your own face only. Or just say so.</span></div>
+      <div class="foot">Preferences are remembered for this session.</div>
+    </div>
+
+    <div class="tab" id="tab-recs">
+      <div class="grid">
+        <section class="card rise d1">
+          <div class="chead">Protected recordings<span class="sp"></span><span class="pill-s" id="storage2"></span></div>
+          <div class="rows" id="recs2"><div class="row"><span class="empty">No recording yet.</span></div></div>
+          <div class="player" id="player2"><video id="video2" controls playsinline></video></div>
+        </section>
+        <section class="card rise d2">
+          <div class="chead">Session activity</div>
+          <ul class="tl" id="events"><li class="empty" style="display:block;border:0">No activity yet.</li></ul>
+        </section>
       </div>
     </div>
+  </main>
+</div>
+
+<!-- settings -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Settings">
+  <div class="dh">Settings <button class="icon-btn" id="bClose" style="color:var(--ink)" aria-label="Close">✕</button></div>
+  <div class="db">
+    <label class="f">Camera</label><select id="srcSel"></select>
+    <label class="f">Performance</label>
+    <div class="seg" id="seg"><span class="thumb"></span><button data-p="ECO">Eco</button><button data-p="BALANCED">Balanced</button><button data-p="QUALITY">Quality</button></div>
+    <label class="f">Feedback</label>
+    <div class="switch">Chime on privacy changes<label><input type="checkbox" id="cues" checked><span class="sw"></span></label></div>
+    <label class="f">Diagnostics (measured)</label>
+    <dl class="kv num" id="diag"><dt>No session</dt><dd></dd></dl>
+    <button class="dbtn" id="bEnd2">End session</button>
   </div>
-
-  <div class="stack">
-    <section class="card">
-      <div class="hd"><h3>People in frame</h3><span class="sub" id="pCount"></span></div>
-      <div class="bd"><div id="people"></div><div class="empty" id="peopleEmpty">Start a session to see people.</div></div>
-      <div class="bd note" id="away" style="padding-top:0"></div>
-    </section>
-
-    <section class="card">
-      <div class="hd"><h3>Privacy timeline</h3></div>
-      <div class="bd"><ul class="tl" id="events"><li class="empty" style="display:block">No events yet.</li></ul></div>
-    </section>
-
-    <section class="card">
-      <details id="diagBox">
-        <summary><h3>Diagnostics</h3><span class="chev">›</span></summary>
-        <div class="sparks">
-          <div class="spark"><div class="lbl"><span>Output fps</span><span class="num" id="fpsNow">–</span></div><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path id="fpsPath"/></svg></div>
-          <div class="spark"><div class="lbl"><span>Capture→screen</span><span class="num" id="latNow">–</span></div><svg viewBox="0 0 100 34" preserveAspectRatio="none"><path id="latPath"/></svg></div>
-        </div>
-        <dl class="kv num" id="diag"></dl>
-      </details>
-    </section>
-
-    <section class="card">
-      <div class="hd"><h3>Protected recordings</h3><span class="sub" id="storage"></span></div>
-      <div class="bd"><div id="recs"><div class="empty">None yet.</div></div>
-        <div class="player" id="player"><video id="video" controls playsinline></video></div></div>
-    </section>
-  </div>
-</main>
+</aside>
+<div class="toast" id="toast"><i id="toastDot"></i><span id="toastText"></span></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let health = {}, st = {}, previewOn = false, recStart = null;
-const fpsHist = [], latHist = [];
+let health = {}, st = {}, previewOn = false, recStart = null, wordmark = "";
 
+/* ---------------- helpers ---------------- */
 async function api(path, method = "POST") {
   const r = await fetch(path, { method, headers: { "X-ConsentLens": "1" } });
   const j = await r.json().catch(() => ({}));
@@ -284,310 +369,287 @@ async function api(path, method = "POST") {
   return j;
 }
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-function chip(el, text, cls) { el.className = "chip " + (cls || ""); el.lastElementChild.textContent = text; }
+function setHTML(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }
+function setText(el, t) { if (el.textContent !== t) el.textContent = t; }
+const label = (g) => ({ eyes_closed: "eyes closed", hands_over_eyes: "eyes covered", peace_sign: "peace sign" }[g] || "");
+const pname = (pid) => pid ? "Person " + String(parseInt(pid.replace("person_", ""), 10)) : "New face";
+const clock = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-/* controls */
-$("bSession").onclick = async () => {
-  if (st.session_id) { await api("/api/session/end"); previewOn = false; $("preview").classList.remove("live"); $("preview").removeAttribute("src"); }
-  else { await api("/api/session/start?source=" + encodeURIComponent($("srcSel").value)); previewOn = false; }
+/* ---------------- reveal ---------------- */
+async function loadMark() {
+  try { wordmark = await (await fetch("/assets/consent-wordmark.svg")).text(); } catch (e) { wordmark = ""; }
+  $("mark").insertAdjacentHTML("afterbegin", wordmark || '<div style="font:700 72px var(--font)">Consent</div>');
+  $("hmark").innerHTML = wordmark;
+}
+function startReveal() {
+  requestAnimationFrame(() => { $("field").classList.add("reveal"); $("splash").classList.add("play"); });
+}
+let entered = false;
+function enter() {
+  if (entered) return; entered = true;
+  const sp = $("splash"), app = $("app"), from = $("mark").getBoundingClientRect();
+  sp.classList.add("leaving");
+  app.classList.add("in"); app.removeAttribute("aria-hidden");
+  const to = $("hmark").getBoundingClientRect();
+  // shared-element glide: the splash wordmark travels into the header logo
+  const dx = to.left - from.left, dy = to.top - from.top, s = to.width / from.width;
+  const m = $("mark");
+  m.style.transformOrigin = "0 0";
+  m.animate([{ transform: "none" }, { transform: `translate(${dx}px, ${dy}px) scale(${s})` }],
+            { duration: 1100, easing: "cubic-bezier(.65,0,.15,1)", fill: "forwards" });
+  sp.animate([{ opacity: 1 }, { opacity: 1, offset: .82 }, { opacity: 0 }], { duration: 1150, fill: "forwards" })
+    .onfinish = () => { $("hmark").classList.add("show"); sp.classList.add("gone"); $("field").classList.add("calm"); };
+}
+$("splash").addEventListener("click", enter);
+$("splash").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " " || e.key === "Escape") enter(); });
+
+/* ---------------- controls ---------------- */
+async function startSession() { await api("/api/session/start?source=" + encodeURIComponent($("srcSel").value)); previewOn = false; }
+async function endSession() { await api("/api/session/end"); previewOn = false; $("preview").classList.remove("live"); $("preview").removeAttribute("src"); }
+$("bMain").onclick = async () => {
+  if (!st.session_id) return startSession();
+  await api(st.recording ? "/api/recording/stop" : "/api/recording/start");
 };
-$("bRec").onclick = async () => { await api(st.recording ? "/api/recording/stop" : "/api/recording/start"); };
-document.querySelectorAll("#seg button").forEach(b => b.onclick = async () => {
-  setSeg(b.dataset.p); if (st.session_id) await api("/api/profile/" + b.dataset.p);
+$("bIdle").onclick = startSession;
+$("bEnd").onclick = endSession; $("bEnd2").onclick = () => { closeDrawer(); endSession(); };
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("on", t.id === "tab-" + b.dataset.tab));
+  setText($("eyebrow"), b.dataset.tab === "live" ? "Live session" : "Recordings");
 });
+function openDrawer() { $("drawer").classList.add("on"); $("scrim").classList.add("on"); setSeg(curProfile); }
+function closeDrawer() { $("drawer").classList.remove("on"); $("scrim").classList.remove("on"); }
+$("bSettings").onclick = openDrawer; $("bClose").onclick = closeDrawer; $("scrim").onclick = closeDrawer;
+let curProfile = "BALANCED";
+document.querySelectorAll("#seg button").forEach(b => b.onclick = async () => { setSeg(b.dataset.p); if (st.session_id) await api("/api/profile/" + b.dataset.p); });
 function setSeg(p) {
-  const btns = [...document.querySelectorAll("#seg button")], th = document.querySelector("#seg .thumb");
-  btns.forEach(b => b.classList.toggle("on", b.dataset.p === p));
-  const on = btns.find(b => b.dataset.p === p); if (!on) return;
-  th.style.left = on.offsetLeft + "px"; th.style.width = on.offsetWidth + "px";
+  curProfile = p;
+  const btns = [...document.querySelectorAll("#seg button")], th = document.querySelector("#seg .thumb"), on = btns.find(b => b.dataset.p === p);
+  btns.forEach(b => b.classList.toggle("on", b === on));
+  if (on && on.offsetWidth) { th.style.left = on.offsetLeft + "px"; th.style.width = on.offsetWidth + "px"; }
 }
 async function devProtect(pid) { await api(`/api/dev/protect/${encodeURIComponent(pid)}`); }
 async function loadSources() {
   const s = await (await fetch("/api/sources")).json();
-  const opts = s.cameras.map(c => [`camera:${c.index}`, `${c.kind === "usb_camera" ? "External" : "Built-in"} · ${c.name}`]);
+  const opts = s.cameras.map(c => [`camera:${c.index}`, `${c.name}${c.kind === "usb_camera" ? "" : " (built-in)"}`]);
   if (s.test_video) opts.push([`file:${s.test_video}`, "Test input · " + s.test_video.split("/").pop()]);
-  if (s.companion.enabled) opts.push(["companion", "Companion app (Meta DAT)"]);
+  if (s.companion.enabled) opts.push(["companion", "Companion app (Meta glasses)"]);
   $("srcSel").innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
-  const ext = s.cameras.find(c => c.kind === "usb_camera");
-  $("srcSel").value = s.test_video ? `file:${s.test_video}` : ext ? `camera:${ext.index}` : (opts[0] || [""])[0];
+  const phone = s.cameras.find(c => /iphone/i.test(c.name)) || s.cameras.find(c => c.kind === "usb_camera");
+  $("srcSel").value = s.test_video ? `file:${s.test_video}` : phone ? `camera:${phone.index}` : (opts[0] || [""])[0];
 }
 
-/* feedback: chime + short spoken line + toast + frame flash, once per privacy event */
+/* ---------------- feedback ---------------- */
 const seen = new Set(); let primed = false, actx = null;
 function chime(up) {
   if (!$("cues").checked) return;
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
     const t0 = actx.currentTime;
-    (up ? [587, 880] : [880, 587]).forEach((f, i) => {
+    (up ? [659, 988] : [988, 659]).forEach((f, i) => {
       const o = actx.createOscillator(), g = actx.createGain(); o.type = "sine"; o.frequency.value = f;
-      g.gain.setValueAtTime(0.0001, t0 + i * .13); g.gain.exponentialRampToValueAtTime(.18, t0 + i * .13 + .02);
-      g.gain.exponentialRampToValueAtTime(.0001, t0 + i * .13 + .16);
-      o.connect(g).connect(actx.destination); o.start(t0 + i * .13); o.stop(t0 + i * .13 + .17);
+      g.gain.setValueAtTime(0.0001, t0 + i * .14); g.gain.exponentialRampToValueAtTime(.14, t0 + i * .14 + .02);
+      g.gain.exponentialRampToValueAtTime(.0001, t0 + i * .14 + .22);
+      o.connect(g).connect(actx.destination); o.start(t0 + i * .14); o.stop(t0 + i * .14 + .24);
     });
   } catch (e) {}
 }
-function setHTML(el, html) { if (el._html !== html) { el._html = html; el.innerHTML = html; } }   // no rewrite = no flicker
-function setText(el, t) { if (el.textContent !== t) el.textContent = t; }
-function setRows(dl, rows) {          // key/value list updated cell-by-cell (no rebuild)
-  if (dl.children.length !== rows.length * 2) {
-    dl.innerHTML = rows.map(() => "<dt></dt><dd></dd>").join(""); dl._html = null;
-  }
-  rows.forEach(([k, v], i) => { setText(dl.children[2 * i], k); setHTML(dl.children[2 * i + 1], v); });
-}
 function toast(text, color) {
-  const t = $("toast"); $("toastText").textContent = text; $("toastDot").style.background = color; t.style.color = color;
+  const t = $("toast"); setText($("toastText"), text); $("toastDot").style.background = color;
   t.classList.remove("show"); void t.offsetWidth; t.classList.add("show");
-  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2600);
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 3000);
 }
-function flash(kind) { const v = $("viewer"); v.classList.remove("flash-blur", "flash-visible"); void v.offsetWidth; v.classList.add(kind); setTimeout(() => v.classList.remove(kind), 700); }
-const label = (g) => ({ eyes_closed: "eyes closed", hands_over_eyes: "hands over eyes", peace_sign: "peace sign" }[g] || g || "");
 function confirmEvents(events) {
   for (const e of events || []) {
     if (seen.has(e.event_id)) continue; seen.add(e.event_id);
     if (!primed) continue;
-    const how = label(e.details && e.details.gesture) || (e.source || "").toLowerCase().replace("_", " ");
-    if (e.type === "PRIVACY_ACTIVATED") { chime(true); flash("flash-blur"); toast(`${e.person_id} blurred · ${how}`, "var(--blurred)"); }
-    if (e.type === "PRIVACY_RELEASED") { chime(false); flash("flash-visible"); toast(`${e.person_id} visible · ${how}`, "var(--visible)"); }
+    const how = label(e.details && e.details.gesture) || (e.source === "VOICE" ? "voice" : "");
+    if (e.type === "PRIVACY_ACTIVATED") { chime(true); toast(`${pname(e.person_id)} is now protected${how ? " · " + how : ""}`, "var(--blue)"); }
+    if (e.type === "PRIVACY_RELEASED") { chime(false); toast(`${pname(e.person_id)} is visible again${how ? " · " + how : ""}`, "#2bc46b"); }
     if (e.type === "CAMERA_DISCONNECTED") toast("Camera disconnected — waiting for the same device", "var(--rec)");
-    if (e.type === "THERMAL_THROTTLE") toast("Mac is warm — switched to Eco", "var(--blurred)");
+    if (e.type === "THERMAL_THROTTLE") toast("Mac is warm — switched to Eco", "var(--warn)");
   }
   primed = true;
 }
 
-/* rendering */
-const RING = 2 * Math.PI * 12;
-function ring(kind, v, max, txt) {
-  const p = v == null ? 0 : Math.min(1, v / max);
-  return `<div class="ring ${kind} ${p > 0 ? "active" : ""}" title="${txt} ${v == null ? "" : v.toFixed(1) + " / " + max + " s"}">
-    <svg width="30" height="30"><circle class="bg" cx="15" cy="15" r="12"/><circle class="fg" cx="15" cy="15" r="12"
-      stroke-dasharray="${RING}" stroke-dashoffset="${RING * (1 - p)}"/></svg><span class="ic">${txt}</span></div>`;
-}
-function stateBadge(s) { return `<span class="state s-${s}">${s}</span>`; }
-function spark(id, hist, max) {
-  if (hist.length < 2) return;
-  const n = hist.length, pts = hist.map((v, i) => `${(i / (n - 1)) * 100},${34 - Math.min(1, v / max) * 30 - 2}`);
-  $(id).setAttribute("d", "M" + pts.join(" L"));
-}
-const un = (v, suf = "") => v === undefined || v === null || v === "unavailable" ? '<span class="un">unavailable</span>' : esc(v) + suf;
-const KIND = { PRIVACY_ACTIVATED: "blur", PRIVACY_RELEASED: "vis", PERSON_NEW: "sys", PERSON_MATCHED: "sys", PROTECTED_ENROLLED: "sys",
-               CAMERA_DISCONNECTED: "err", VISION_ERROR: "err", CAMERA_RECONNECTED: "sys", THERMAL_THROTTLE: "blur", THERMAL_RESTORED: "sys" };
-function describe(e) {
-  const p = `<b>${esc(e.person_id || "")}</b>`, how = label(e.details && e.details.gesture);
-  return ({
-    PRIVACY_ACTIVATED: `${p} asked to be blurred${how ? " · " + how : ""}`,
-    PRIVACY_RELEASED: `${p} consented to be visible${how ? " · " + how : ""}`,
-    PERSON_NEW: `${p} entered the frame`,
-    PERSON_MATCHED: `${p} recognised on return${e.details && e.details.protected ? " · still blurred" : ""}`,
-    PROTECTED_ENROLLED: `${p} protected across leave/return`,
-    IDENTITY_RECHECK: `${p} identity re-checked`,
-    CAMERA_DISCONNECTED: "Camera disconnected", CAMERA_RECONNECTED: "Camera reconnected",
-    THERMAL_THROTTLE: "Thermal pressure · switched to Eco", THERMAL_RESTORED: "Thermal normal · profile restored",
-    VISION_ERROR: "Vision error · output shielded",
-  })[e.type] || esc(e.type.toLowerCase().replace(/_/g, " "));
-}
-let lastTop = null;
-function render() {
-  const active = !!st.session_id, m = st.metrics || {};
-  // header + viewer
-  if (active && !previewOn) { const img = $("preview"); img.onload = () => img.classList.add("live"); img.src = "/api/preview/protected?" + Date.now(); previewOn = true; }
-  $("idle").style.display = active ? "none" : "grid";
-  ["hudL", "hudR", "hudB"].forEach(id => $(id).style.display = active ? "flex" : "none");
-  $("bSession").textContent = active ? "End session" : "Start session";
-  $("bRec").disabled = !active;
-  const test = active && String(st.source).startsWith("TEST INPUT");
-  $("testBanner").style.display = test ? "block" : "none";
-  chip($("cSrc"), active ? (st.camera_connected === false ? "Camera disconnected" : st.source.replace("CAMERA: ", "")) : "No session",
-       active ? (st.camera_connected === false ? "warn" : "on") : "");
-  const o = st.output_state;
-  chip($("cOut"), active ? (o === "NORMAL" ? "Output clear" : o === "ERROR" ? "Output shielded (error)" : "Blur active") : "Output —",
-       active ? (o === "NORMAL" ? "on" : "warn") : "");
-  if (st.recording) { recStart = recStart || Date.now(); } else recStart = null;
-  const rs = recStart ? Math.floor((Date.now() - recStart) / 1000) : 0;
-  const clock = `${String(Math.floor(rs / 60)).padStart(2, "0")}:${String(rs % 60).padStart(2, "0")}`;
-  chip($("cRec"), st.recording ? `Recording ${clock}` : "Not recording", st.recording ? "rec" : "");
-  $("bRec").classList.toggle("on", !!st.recording); $("bRec").lastElementChild.textContent = st.recording ? "Stop" : "Record";
-  $("hudSrc").textContent = active ? (test ? "TEST INPUT" : (st.source || "").replace("CAMERA: ", "")) : "";
-  $("hudRec").innerHTML = st.recording ? `<span style="color:var(--rec)">●</span> REC ${clock}` : "LIVE";
-  $("hudB").innerHTML = active ? `${un(m.processed_fps)} fps<span class="sep"></span>${un(m.e2e_ms_p50, " ms")}<span class="sep"></span>${esc((m.profile || "").toLowerCase())}` : "";
-  if (m.profile_chosen) setSeg(m.profile_chosen);
+/* ---------------- live rendering (in place, no rebuilds) ---------------- */
+const faceGone = new Map(), firstSeen = new Map(), seenTurns = new Set(), cardGone = new Map(); let turnsPrimed = false;
+const RING = 2 * Math.PI * 20;
+function stateOf(cs) { return cs === "DENIED" || cs === "REVOKED" ? ["Protected", "p"] : cs === "GRANTED" ? ["Visible · consented", "g"] : cs === "UNCERTAIN" ? ["Checking", "u"] : ["Visible", ""]; }
 
-  // voice status (never transcripts): state, live mic level, and a notice for every command
-  // that was heard but NOT applied — so it never looks like "it didn't hear us"
-  const vv = st.voice || {}, lvl = vv.mic_level || 0;
-  [...$("mic").children].forEach((bar, i) => { bar.style.height = `${2 + Math.min(9, lvl * 9 * (0.6 + i * 0.25))}px`; bar.classList.toggle("lit", lvl > 0.05 * (i + 1)); });
-  for (const r of vv.recent || []) {
-    if (seenTurns.has(r.turn_id)) continue; seenTurns.add(r.turn_id);
-    if (!turnsPrimed) continue;
-    const who = r.target ? r.target.replace("person_", "#") : "";
-    const msg = { confirm_by_gesture: r.intent === "ALLOW"
-                    ? "Heard consent — couldn't tell who. Whoever is consenting: quick peace sign now"
-                    : "Heard a blur request — couldn't tell who. Whoever asked: cover your eyes briefly now",
-                  unclear_speaker: "Heard a privacy request but couldn't tell who said it — face the camera and repeat",
-                  not_blurred: `Heard “unblur” — ${who || "that person"} isn't blurred`,
-                  already_blurred: `${who} is already blurred`, not_applied: "Heard a request — not applied" }[r.outcome];
-    if (msg) toast(msg, "var(--info)");
-  }
-  turnsPrimed = true;
-  const vs = (st.voice || health.voice || {}).state || "OFF";
-  chip($("cVoice"), vs === "LIVE" ? "Voice commands on" : vs === "DISABLED" ? "Voice off" : vs === "OFF" ? "Voice —" : "Voice unavailable",
-       vs === "LIVE" ? "on" : vs === "DEGRADED" || vs === "UNAVAILABLE" ? "warn" : "");
-
-  // people — updated IN PLACE (keyed), so nothing re-animates or blinks every tick
-  const tracks = st.tracks || [], persons = new Map((st.persons || []).map(p => [p.person_id, p]));
-  const nowMs = Date.now();
-  for (const t of tracks) if (!t.person_id && !firstSeen.has(t.track_id)) firstSeen.set(t.track_id, nowMs);
-  // brief false detections (a hand, a poster) shouldn't pop in and out: show unidentified faces
-  // only once they've lasted 0.7 s — or immediately if they are being shielded
-  const steady = (t) => t.person_id || t.shielded || nowMs - (firstSeen.get(t.track_id) || nowMs) > 700;
-  const shownTracks = tracks.filter(steady);
-  const items = shownTracks.map(t => {
-    if (!t.person_id) return { key: "t:" + t.track_id, name: "New face", state: "UNCERTAIN",
-      note: "Checking whether this is someone who asked to be blurred" + (t.shielded ? " — shielded meanwhile" : ""), rings: [] };
-    const p = persons.get(t.person_id) || {}, g = t.gesture || {}, cs = p.consent_state || t.consent_state || "UNKNOWN";
-    const prot = cs === "DENIED" || cs === "REVOKED";
-    const note = t.head_only ? "Face turned — blur follows head" : t.coasting ? "Briefly lost — kept shielded"
-      : cs === "UNKNOWN" ? (st.strict ? "Blurred until they consent (strict mode)" : "No request — visible (not consent)")
-      : prot ? "Blurred — peace sign or say “you can record me” to unblur" : "Consented — visible";
-    return { key: "p:" + t.person_id, name: t.person_id, state: cs, note, pid: t.person_id, prot,
-      rings: prot ? [["peace", g.peace_s, 1, "V"]] : [["eyes", g.eyes_closed_s, 2, "EYE"], ["cover", g.cover_s, 1.5, "HND"]] };
-  });
-  renderPeople(items, active);
-  renderFaces(shownTracks, persons, active);
-  setText($("pCount"), active ? `${shownTracks.filter(t => !t.coasting).length} in frame` : "");
-  if (firstSeen.size > 200) firstSeen.clear();
-  const away = [...persons.values()].filter(p => !tracks.some(t => t.person_id === p.person_id) && (p.consent_state === "DENIED" || p.consent_state === "REVOKED"));
-  setText($("away"), away.length ? `Out of frame, still protected on return: ${away.map(p => p.person_id).join(", ")}` : "");
-
-  // timeline — only rebuilt when a new event arrives; only the new rows animate
-  const evs = (st.events || []).slice().reverse();
-  const top = evs.length ? evs[0].event_id : null;
-  if (top !== lastTop) {
-    const prev = new Set(($("events")._ids || []));
-    setHTML($("events"), evs.length ? evs.map(e => `<li class="${lastTop && !prev.has(e.event_id) ? "fresh enter" : ""}"><span class="t num">${(e.t_ms / 1000).toFixed(1)}s</span><span class="k ${KIND[e.type] || ""}"></span><span class="w">${describe(e)}</span></li>`).join("")
-      : `<li class="empty" style="display:block">${active ? "No events yet." : "No session."}</li>`);
-    $("events")._ids = evs.map(e => e.event_id);
-    lastTop = top;
-  }
-
-  // diagnostics
-  if (active) {
-    if (typeof m.processed_fps === "number") { fpsHist.push(m.processed_fps); if (fpsHist.length > 80) fpsHist.shift(); }
-    if (typeof m.e2e_ms_p50 === "number") { latHist.push(m.e2e_ms_p50); if (latHist.length > 80) latHist.shift(); }
-    spark("fpsPath", fpsHist, 32); spark("latPath", latHist, Math.max(60, ...latHist));
-    setText($("fpsNow"), String(m.processed_fps ?? "–")); setText($("latNow"), m.e2e_ms_p50 != null ? m.e2e_ms_p50 + " ms" : "–");
-    const ss = st.source_status || {};
-    setRows($("diag"), [
-      ["Source", `${esc(ss.state || "?")}`],
-      ["Camera in / output", `${un(m.input_fps)} / ${un(m.processed_fps)} fps`],
-      ["Analysis rate", `${un(m.analyze_hz)} Hz`],
-      ["Per-frame cost p50 / p95", `${un(m.vision_ms_p50)} / ${un(m.vision_ms_p95, " ms")}`],
-      ["Capture→screen p50 / p95", `${un(m.e2e_ms_p50)} / ${un(m.e2e_ms_p95, " ms")}`],
-      ["Frames in / out / dropped", `${un(m.captured)} / ${un(m.frames)} / ${un((m.dropped || 0) + (m.rate_skipped || 0))}`],
-      ["Faces tracked", un(m.active_tracks)],
-      ["CPU / memory", `${un(m.cpu_percent, "%")} / ${un(m.rss_mb, " MB")}`],
-      ["Mac thermal", `${un(m.host_thermal)}${m.throttled ? " · throttled" : ""}`],
-      ["Glasses / phone thermal", un(m.device_thermal)],
-      ["Glasses / phone battery", un(m.device_battery)],
-      ["Landmark watchdog", `${(st.landmark_stalls || {}).timeouts ?? 0} timeouts`],
-    ]);
-  } else setRows($("diag"), [["No session", ""]]);
-
-  // recordings
-  const recs = (st.finished_recordings || []).slice().reverse();
-  setText($("storage"), recs[0] ? (recs[0].storage === "r2" ? "Cloudflare R2" : "Local") : "");
-  setHTML($("recs"), recs.length ? recs.map(r => {
-    const ready = r.storage !== "r2" || r.upload === "uploaded";
-    return `<div class="rec"><div><div class="num">${esc(r.recording_id)}</div><div class="meta">${r.frames} frames · ${r.storage === "r2" ? "R2 · " + esc(r.upload || "") : "local file"}${r.error ? " · error" : ""}</div></div>
-      ${ready ? `<button class="btn" onclick="play('${esc(r.recording_id)}')">Play</button>` : `<span class="meta">uploading…</span>`}</div>`;
-  }).join("") : `<div class="empty">None yet.</div>`);
-}
-
-/* face overlay: one element per track, moved with transforms (smooth, no re-creation) */
-const faceGone = new Map(), firstSeen = new Map(), seenTurns = new Set(); let turnsPrimed = false;
 function renderFaces(tracks, persons, active) {
-  const box = $("faces"), seen = new Set();
+  const box = $("faces"), seenK = new Set(), now = Date.now();
   const res = (st.source_capabilities || {}).output_resolution || [640, 480];
-  const sx = box.clientWidth / res[0], sy = box.clientHeight / res[1], now = Date.now();
+  const sx = box.clientWidth / res[0], sy = box.clientHeight / res[1];
   if (active) for (const t of tracks) {
-    const key = t.track_id; seen.add(key);
+    const key = t.track_id; seenK.add(key);
     let el = box.querySelector(`[data-k="${CSS.escape(key)}"]`);
-    if (!el) {
-      el = document.createElement("div"); el.className = "face"; el.dataset.k = key;
-      el.innerHTML = "<i></i><i></i><i></i><i></i><b></b><div class='hold'><span></span></div>"; box.appendChild(el);
-    }
-    const p = persons.get(t.person_id), cs = p ? p.consent_state : "UNCERTAIN";
-    const prot = cs === "DENIED" || cs === "REVOKED";
-    const kind = !t.person_id ? "u" : prot || t.shielded ? "p" : "v";
-    el.className = "face " + kind;
-    const [x, y, w, h] = t.box, pad = 0.12;
-    el.style.width = `${(w * (1 + 2 * pad)) * sx}px`; el.style.height = `${(h * (1 + 2 * pad)) * sy}px`;
+    if (!el) { el = document.createElement("div"); el.dataset.k = key; el.innerHTML = "<div class='frame'></div><b></b><div class='hold'><span></span></div>"; box.appendChild(el); }
+    const p = persons.get(t.person_id), cs = p ? p.consent_state : "UNCERTAIN", prot = cs === "DENIED" || cs === "REVOKED";
+    el.className = "face " + (!t.person_id ? "u" : prot || t.shielded ? "p" : "");
+    const [x, y, w, h] = t.box, pad = .16;
+    el.style.width = `${w * (1 + 2 * pad) * sx}px`; el.style.height = `${h * (1 + 2 * pad) * sy}px`;
     el.style.transform = `translate(${(x - w * pad) * sx}px, ${(y - h * pad) * sy}px)`;
-    const label = !t.person_id ? "CHECKING" : prot ? "PROTECTED" : t.shielded ? "SHIELDED" : cs === "GRANTED" ? "VISIBLE · CONSENTED" : "VISIBLE";
-    setText(el.querySelector("b"), `${t.person_id ? t.person_id.replace("person_", "#") + "  " : ""}${label}`);
-    // hold progress for the gesture currently being held (eyes / cover / peace)
+    setText(el.querySelector("b"), `${pname(t.person_id)} · ${stateOf(cs)[0]}`);
     const g = t.gesture || {}, hold = prot ? [g.peace_s, 1] : g.eyes_closed_s != null ? [g.eyes_closed_s, 2] : [g.cover_s, 1.5];
-    const hb = el.querySelector(".hold"), pr = hold[0] == null ? 0 : Math.min(1, hold[0] / hold[1]);
+    const pr = hold[0] == null ? 0 : Math.min(1, hold[0] / hold[1]), hb = el.querySelector(".hold");
     hb.classList.toggle("on", pr > 0); hb.firstElementChild.style.width = `${pr * 100}%`;
-    if (t.body) {  // the body this face belongs to: whose hands count for this person's gestures
-      const bk = "b:" + key; seen.add(bk);
+    if (t.body) {
+      const bk = "b:" + key; seenK.add(bk);
       let be = box.querySelector(`[data-k="${CSS.escape(bk)}"]`);
       if (!be) { be = document.createElement("div"); be.dataset.k = bk; box.insertBefore(be, box.firstChild); }
-      be.className = "bodyx " + (kind === "p" ? "p" : "");
+      be.className = "bodyx " + (prot ? "p" : "");
       const [bx, by, bw, bh] = t.body;
-      be.style.width = `${bw * sx}px`; be.style.height = `${bh * sy}px`;
-      be.style.transform = `translate(${bx * sx}px, ${by * sy}px)`;
+      be.style.width = `${bw * sx}px`; be.style.height = `${bh * sy}px`; be.style.transform = `translate(${bx * sx}px, ${by * sy}px)`;
     }
   }
   for (const el of [...box.children]) {
-    if (seen.has(el.dataset.k)) { faceGone.delete(el.dataset.k); el.classList.remove("out"); continue; }
-    const since = faceGone.get(el.dataset.k) ?? now; faceGone.set(el.dataset.k, since);
-    el.classList.add("out");
+    if (seenK.has(el.dataset.k)) { faceGone.delete(el.dataset.k); el.classList.remove("out"); continue; }
+    const since = faceGone.get(el.dataset.k) ?? now; faceGone.set(el.dataset.k, since); el.classList.add("out");
     if (now - since > 400) { el.remove(); faceGone.delete(el.dataset.k); }
   }
 }
 
-/* keyed people list: create a card once, then only update what changed */
-const gone = new Map();  // key -> first time missing (cards linger 800 ms so brief tracker drops don't blink)
 function renderPeople(items, active) {
   const box = $("people"), now = Date.now(), keys = new Set(items.map(i => i.key));
   for (const it of items) {
-    gone.delete(it.key);
+    cardGone.delete(it.key);
     let el = box.querySelector(`[data-k="${CSS.escape(it.key)}"]`);
     if (!el) {
       el = document.createElement("div"); el.className = "person enter"; el.dataset.k = it.key;
-      el.innerHTML = `<div><div class="pid"><span class="nm"></span><span class="state"></span><span class="dev"></span></div><div class="note"></div></div><div class="rings"></div>`;
+      el.innerHTML = `<div class="avatar"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="8.5" r="4"/><path d="M4.5 20c1.4-3.6 4.3-5.5 7.5-5.5s6.1 1.9 7.5 5.5"/></svg><svg class="ring2" viewBox="0 0 44 44"><circle cx="22" cy="22" r="20" stroke-dasharray="${RING}" stroke-dashoffset="${RING}"/></svg></div><span class="pname"></span><span class="state"></span><span class="dev"></span>`;
       box.appendChild(el);
     }
-    setText(el.querySelector(".nm"), it.name);
-    const s = el.querySelector(".state");
-    if (s.textContent !== it.state) { s.textContent = it.state; s.className = "state s-" + it.state; }
-    setText(el.querySelector(".note"), it.note);
-    setHTML(el.querySelector(".dev"), health.dev_controls_enabled && it.pid && !it.prot
-      ? `<button class="btn" style="height:24px;padding:0 8px;font-size:11px" onclick="devProtect('${esc(it.pid)}')">Test blur</button>` : "");
-    const rb = el.querySelector(".rings"), sig = it.rings.map(r => r[0]).join(",");
-    if (rb.dataset.sig !== sig) { rb.dataset.sig = sig; rb.innerHTML = it.rings.map(r => ring(...r)).join(""); }
-    it.rings.forEach((r, i) => {            // update progress in place -> smooth CSS transition
-      const [, v, max] = r, p = v == null ? 0 : Math.min(1, v / max), node = rb.children[i];
-      if (!node) return;
-      node.classList.toggle("active", p > 0);
-      node.querySelector(".fg").setAttribute("stroke-dashoffset", String(RING * (1 - p)));
-    });
+    setText(el.querySelector(".pname"), it.name);
+    const s = el.querySelector(".state"); if (s.textContent !== it.state[0]) { s.textContent = it.state[0]; s.className = "state " + it.state[1]; }
+    el.querySelector(".ring2 circle").setAttribute("stroke-dashoffset", String(RING * (1 - it.progress)));
+    setHTML(el.querySelector(".dev"), health.dev_controls_enabled && it.pid && it.state[1] !== "p"
+      ? `<button class="ghost" style="height:28px;padding:0 10px;color:var(--blue);border-color:var(--line);font-size:12px;margin:0" onclick="devProtect('${esc(it.pid)}')">Test blur</button>` : "");
   }
-  for (const el of [...box.children]) {
+  for (const el of [...box.querySelectorAll(".person")]) {
     if (keys.has(el.dataset.k)) continue;
-    const since = gone.get(el.dataset.k) ?? now; gone.set(el.dataset.k, since);
-    if (now - since > 800 || !active) { el.remove(); gone.delete(el.dataset.k); }
+    const since = cardGone.get(el.dataset.k) ?? now; cardGone.set(el.dataset.k, since);
+    if (now - since > 800 || !active) { el.remove(); cardGone.delete(el.dataset.k); }
   }
-  $("peopleEmpty").style.display = box.children.length ? "none" : "block";
-  setText($("peopleEmpty"), active ? "Nobody in frame." : "Start a session to see people.");
+  let em = box.querySelector(".empty");
+  if (!box.querySelector(".person")) { if (!em) { em = document.createElement("span"); em.className = "empty"; box.appendChild(em); } setText(em, active ? "Nobody in frame yet." : "People appear here when a session is live."); }
+  else if (em) em.remove();
 }
-function play(id) { const v = $("video"); v.src = `/api/recordings/${id}/protected`; $("player").classList.add("show"); v.play().catch(() => {}); }
 
+function renderRecs(recs, rowsEl, storageEl, playerEl, videoEl) {
+  setText(storageEl, recs[0] ? (recs[0].storage === "r2" ? "Stored in Cloudflare R2" : "Stored on this Mac") : "");
+  const r = recs[0];
+  setHTML(rowsEl, r ? `
+    <div class="row"><span>Original<span class="sub">Kept private — never shared</span></span><span class="t num">${clock(r.duration_s || 0)}</span>
+      <span class="lock" title="Restricted"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span></div>
+    <div class="row"><span>Protected<span class="sub">${r.storage === "r2" ? (r.upload === "uploaded" ? "Uploaded" : esc(r.upload || "Uploading…")) : "Ready"}${recs.length > 1 ? ` · ${recs.length} recordings` : ""}</span></span><span class="t num">${clock(r.duration_s || 0)}</span>
+      ${r.storage !== "r2" || r.upload === "uploaded" ? `<a href="/api/recordings/${esc(r.recording_id)}/protected" download="consent-protected-${esc(r.recording_id)}.mp4" title="Download" onclick="event.stopPropagation()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg></a>` : "<span></span>"}</div>
+    <div class="row" style="grid-template-columns:1fr"><button class="ghost" style="color:var(--blue);border-color:var(--line);height:36px;margin:0" onclick="play('${esc(r.recording_id)}','${playerEl.id}','${videoEl.id}')">Play protected recording</button></div>`
+    : `<div class="row"><span class="empty">No recording yet.</span></div>`);
+}
+function play(id, pl, vd) { const v = $(vd); v.src = `/api/recordings/${id}/protected`; $(pl).classList.add("show"); v.play().catch(() => {}); }
+
+const KIND = { PRIVACY_ACTIVATED: "blur", PRIVACY_RELEASED: "vis", CAMERA_DISCONNECTED: "err", VISION_ERROR: "err" };
+function describe(e) {
+  const p = `<b>${esc(pname(e.person_id))}</b>`, how = label(e.details && e.details.gesture) || (e.source === "VOICE" ? "voice" : "");
+  return ({ PRIVACY_ACTIVATED: `${p} asked to be blurred${how ? " · " + how : ""}`, PRIVACY_RELEASED: `${p} chose to be visible${how ? " · " + how : ""}`,
+            PERSON_NEW: `${p} entered`, PERSON_MATCHED: `${p} recognised on return${e.details && e.details.protected ? " · still protected" : ""}`,
+            CAMERA_DISCONNECTED: "Camera disconnected", CAMERA_RECONNECTED: "Camera reconnected",
+            THERMAL_THROTTLE: "Switched to Eco (Mac warm)", VISION_ERROR: "Vision error · output shielded" })[e.type] || "";
+}
+let lastTop = null;
+
+function render() {
+  const active = !!st.session_id, m = st.metrics || {};
+  // preview + header
+  if (active && !previewOn) { const img = $("preview"); img.onload = () => img.classList.add("live"); img.src = "/api/preview/protected?" + Date.now(); previewOn = true; }
+  $("idle").style.display = active ? "none" : "grid";
+  const live = $("liveTag"); live.classList.toggle("on", active); setText(live.lastElementChild, active ? "Live" : "Offline");
+  setText($("perf"), active ? `${m.processed_fps ?? "–"} fps` : "");
+  const test = active && String(st.source).startsWith("TEST INPUT");
+  $("testBanner").style.display = test ? "block" : "none";
+  const camName = active ? (st.source || "").replace(/^CAMERA: /, "").replace(/ \((USB\/external|built-in)\)$/, "") : "";
+  setText($("devName"), !active ? "No camera" : st.camera_connected === false ? "Camera disconnected" : /iphone/i.test(camName) ? "iPhone connected" : test ? "Test input" : camName);
+  $("devDot").classList.toggle("on", active && st.camera_connected !== false);
+  if (st.recording) recStart = recStart || Date.now(); else recStart = null;
+  const rs = recStart ? (Date.now() - recStart) / 1000 : 0;
+  $("bMain").classList.toggle("rec", !!st.recording);
+  setText($("bMainT"), !active ? "Start session" : st.recording ? `Stop recording · ${clock(rs)}` : "Start recording");
+  $("bEnd").style.display = active ? "" : "none";
+  if (m.profile_chosen && m.profile_chosen !== curProfile) setSeg(m.profile_chosen);
+
+  // people
+  const tracks = st.tracks || [], persons = new Map((st.persons || []).map(p => [p.person_id, p])), nowMs = Date.now();
+  for (const t of tracks) if (!t.person_id && !firstSeen.has(t.track_id)) firstSeen.set(t.track_id, nowMs);
+  const shown = tracks.filter(t => t.person_id || t.shielded || nowMs - (firstSeen.get(t.track_id) || nowMs) > 700);
+  const items = shown.map(t => {
+    const p = persons.get(t.person_id), cs = p ? p.consent_state : "UNCERTAIN", st_ = stateOf(cs), g = t.gesture || {};
+    const prot = st_[1] === "p", hold = prot ? [g.peace_s, 1] : g.eyes_closed_s != null ? [g.eyes_closed_s, 2] : [g.cover_s, 1.5];
+    return { key: t.person_id ? "p:" + t.person_id : "t:" + t.track_id, name: pname(t.person_id), state: st_, pid: t.person_id,
+             progress: hold[0] == null ? 0 : Math.min(1, hold[0] / hold[1]) };
+  });
+  renderPeople(items, active);
+  renderFaces(shown, persons, active);
+  if (firstSeen.size > 200) firstSeen.clear();
+
+  // privacy controls: light up the gesture being held right now
+  let eyesP = 0, peaceP = 0;
+  for (const t of shown) { const g = t.gesture || {}; eyesP = Math.max(eyesP, (g.eyes_closed_s || 0) / 2, (g.cover_s || 0) / 1.5); peaceP = Math.max(peaceP, (g.peace_s || 0) / 1); }
+  $("ctlEyes").classList.toggle("active", eyesP > 0); $("ctlEyes").querySelector(".meter i").style.width = `${Math.min(1, eyesP) * 100}%`;
+  $("ctlPeace").classList.toggle("active", peaceP > 0); $("ctlPeace").querySelector(".meter i").style.width = `${Math.min(1, peaceP) * 100}%`;
+
+  // voice: recognised command (never the raw words) + outcome
+  const vv = st.voice || {}, lvl = vv.mic_level || 0, vstate = vv.state || "OFF";
+  $("mic").classList.toggle("on", vstate === "LIVE");
+  [...$("mic").children].forEach((bar, i) => { bar.style.height = `${3 + Math.min(11, lvl * 11 * (.55 + i * .2))}px`; bar.classList.toggle("lit", lvl > .04 * (i + 1)); });
+  $("ctlVoice").classList.toggle("active", vstate === "LIVE" && lvl > .1);
+  const last = (vv.recent || []).filter(r => r.intent === "DENY" || r.intent === "ALLOW").slice(-1)[0];
+  setText($("vquote"), last ? (last.intent === "DENY" ? "“Please blur me”" : "“Unblur me”") : "—");
+  const vs = $("vstatus"); let vtxt = "Listening", vcls = "";
+  if (!active) { vtxt = "Listening when a session is live"; vcls = "idle-s"; }
+  else if (vstate !== "LIVE") { vtxt = vstate === "DISABLED" ? "Voice is off" : "Voice unavailable"; vcls = "warn"; }
+  else if (st.confirm) { vtxt = st.confirm === "ALLOW" ? "Whoever is consenting — quick peace sign" : "Whoever asked — cover your eyes briefly"; vcls = "warn"; }
+  else if (last) vtxt = { blur: "Privacy enabled", unblur: "Visible again", already_blurred: "Already protected", not_blurred: "Wasn't blurred", confirm_by_gesture: "Confirm with a gesture", unclear_speaker: "Couldn't tell who said it" }[last.outcome] || "Listening";
+  vs.className = "vstatus " + vcls; setText(vs.lastElementChild, vtxt);
+  for (const r of vv.recent || []) {
+    if (seenTurns.has(r.turn_id)) continue; seenTurns.add(r.turn_id);
+    if (!turnsPrimed) continue;
+    const msg = { confirm_by_gesture: r.intent === "ALLOW" ? "Heard consent but not who said it — whoever it was: quick peace sign" : "Heard a blur request but not who said it — whoever it was: cover your eyes briefly",
+                  not_blurred: `${pname(r.target)} isn't blurred`, already_blurred: `${pname(r.target)} is already protected` }[r.outcome];
+    if (msg) toast(msg, "var(--warn)");
+  }
+  turnsPrimed = true;
+
+  // recordings + activity
+  const recs = (st.finished_recordings || []).slice().reverse();
+  renderRecs(recs, $("recs"), $("storage"), $("player"), $("video"));
+  renderRecs(recs, $("recs2"), $("storage2"), $("player2"), $("video2"));
+  const evs = (st.events || []).filter(e => describe(e)).slice().reverse(), top = evs.length ? evs[0].event_id : null;
+  if (top !== lastTop) {
+    const prev = new Set($("events")._ids || []);
+    setHTML($("events"), evs.length ? evs.map(e => `<li class="${lastTop && !prev.has(e.event_id) ? "fresh" : ""}"><span class="num">${clock(e.t_ms / 1000)}</span><span class="k ${KIND[e.type] || ""}"></span><span>${describe(e)}</span></li>`).join("")
+      : `<li class="empty" style="display:block;border:0">No activity yet.</li>`);
+    $("events")._ids = evs.map(e => e.event_id); lastTop = top;
+  }
+
+  // diagnostics (drawer)
+  const un = (v, suf = "") => v === undefined || v === null || v === "unavailable" ? '<span class="un">unavailable</span>' : esc(v) + suf;
+  setHTML($("diag"), active ? [
+    ["Camera in / out", `${un(m.input_fps)} / ${un(m.processed_fps)} fps`], ["Analysis", `${un(m.analyze_hz)} Hz`],
+    ["Frame cost p50 / p95", `${un(m.vision_ms_p50)} / ${un(m.vision_ms_p95, " ms")}`], ["Camera→screen", `${un(m.e2e_ms_p50, " ms")}`],
+    ["CPU · memory", `${un(m.cpu_percent, "%")} · ${un(m.rss_mb, " MB")}`], ["Mac thermal", `${un(m.host_thermal)}${m.throttled ? " · throttled" : ""}`],
+    ["Microphone", vstate === "LIVE" ? "listening" : un(null)], ["Profile", un((m.profile || "").toLowerCase())],
+  ].map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("") : "<dt>No session</dt><dd></dd>");
+}
+
+/* ---------------- boot ---------------- */
 async function boot() {
-  health = await (await fetch("/api/health")).json();
-  await loadSources();
-  setSeg("BALANCED");
+  await loadMark();
+  startReveal();
+  $("splash").focus({ preventScroll: true });
+  health = await (await fetch("/api/health")).json().catch(() => ({}));
+  await loadSources().catch(() => {});
+  render();
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const connect = () => {
     const ws = new WebSocket(`${proto}://${location.host}/api/events`);
@@ -595,7 +657,7 @@ async function boot() {
     ws.onclose = () => setTimeout(connect, 1000);
   };
   connect();
-  setInterval(() => { if (st.recording) render(); }, 1000);  // keep the REC clock ticking
+  setInterval(() => { if (st.recording) render(); }, 1000);
 }
 boot();
 </script>
